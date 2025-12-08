@@ -7,7 +7,6 @@ import arxiv
 import wikipedia
 from pathlib import Path
 from ctransformers import AutoModelForCausalLM
-import re
 
 # ==================== SERVICE FUNCTIONS ====================
 
@@ -874,104 +873,141 @@ def generate_response(model, messages, system_prompt="", max_tokens=256, tempera
     
     return response.strip()
 
-# ==================== MODE DETECTION ====================
+# ==================== STREAMLIT APP ====================
 
-def detect_mode(query: str) -> str:
-    """
-    Detect whether the query should trigger a search or just go to AI chat.
-    Returns: "search", "chat", or "deep_think"
-    """
-    query_lower = query.lower().strip()
-    
-    # Search triggers - queries that should trigger web search
-    search_keywords = [
-        "what is", "who is", "where is", "when is", "why is", "how to",
-        "current", "latest", "news about", "weather in", "temperature in",
-        "air quality in", "location of", "find", "search for", "look up",
-        "define", "meaning of", "translate", "map of", "country",
-        "research", "paper", "article", "study", "results", "information",
-        "data", "statistics", "facts about", "population of", "capital of",
-        "latest news", "current events", "breaking news", "headlines",
-        "stock price", "market", "currency", "exchange rate", "price of",
-        "history of", "timeline", "events", "historical", "biography",
-        "recipe for", "how to cook", "how to make", "ingredients for",
-        "distance between", "travel time", "route from", "directions to",
-        "flights to", "hotels in", "restaurants near", "things to do in",
-        "movies about", "books by", "author of", "director of", "cast of",
-        "symptoms of", "treatment for", "cure for", "medicine for", "disease",
-        "company profile", "business", "ceo of", "founder of", "products of",
-        "scientific", "research on", "experiment", "study on", "paper about"
-    ]
-    
-    # Chat triggers - conversational phrases that should go directly to AI
-    chat_keywords = [
-        "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
-        "how are you", "thank you", "thanks", "please", "could you", "can you",
-        "would you", "tell me about", "explain", "describe", "discuss",
-        "what do you think", "your opinion", "do you know", "do you think",
-        "i want to", "i need help with", "help me", "assist me",
-        "let's talk", "chat about", "converse", "conversation",
-        "how do i", "what should i", "what would you", "what can you",
-        "can we talk", "let's discuss", "i'd like to", "i'm wondering",
-        "i'm curious", "i'm interested in", "what's your", "how's it going",
-        "nice to meet you", "good to see you", "long time no see",
-        "how have you been", "what's up", "what's new", "how's your day",
-        "how's everything", "how's life", "how are things", "how do you do"
-    ]
-    
-    # Deep think triggers - philosophical/analytical questions
-    deep_think_keywords = [
-        "what is the meaning", "philosophy of", "why do we", "purpose of",
-        "ethical", "moral dilemma", "should i", "what if", "imagine if",
-        "theoretical", "hypothetical", "thought experiment", "deep question",
-        "profound", "existential", "life and death", "universe", "cosmos",
-        "consciousness", "mind", "soul", "spirituality", "religion",
-        "love is", "happiness is", "success means", "beauty is",
-        "truth is", "justice is", "freedom is", "equality is",
-        "analyze this", "critically examine", "evaluate", "assess",
-        "compare and contrast", "discuss the implications", "what are the consequences",
-        "future of", "prediction", "forecast", "speculate", "theorize"
-    ]
-    
-    # Check if query matches deep think keywords
-    for keyword in deep_think_keywords:
-        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
-            return "deep_think"
-    
-    # Check if query starts with search keywords
-    for keyword in search_keywords:
-        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
-            return "search"
-    
-    # Check if query starts with chat keywords
-    for keyword in chat_keywords:
-        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
-            return "chat"
-    
-    # Check query length and structure
-    words = query_lower.split()
-    
-    # Very short queries likely need search
-    if len(words) <= 2:
-        return "search"
-    
-    # Questions (starting with question words)
-    question_words = ["what", "who", "where", "when", "why", "how", "which"]
-    if any(query_lower.startswith(word) for word in question_words):
-        return "search"
-    
-    # If contains "?" but not conversational
-    if "?" in query:
-        # Check if it's a conversational question
-        conversational_patterns = ["how are you", "do you", "can you", "would you", "could you"]
-        if not any(pattern in query_lower for pattern in conversational_patterns):
-            return "search"
-    
-    # Default to chat for longer, conversational queries
-    return "chat"
+st.set_page_config(
+    page_title="AI Search Assistant",
+    page_icon="🔍🤖",
+    layout="wide"
+)
 
-# ==================== SEARCH FUNCTIONS ====================
+st.title("🔍🤖 AI-Powered Multi-Source Search")
+st.markdown("*Search 16 sources simultaneously, then get AI-powered analysis*")
 
+# Initialize session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "model_loaded" not in st.session_state:
+    st.session_state.model_loaded = False
+
+if "system_prompt" not in st.session_state:
+    st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
+
+if "selected_preset" not in st.session_state:
+    st.session_state.selected_preset = "Search Analyst"
+
+if "last_search_results" not in st.session_state:
+    st.session_state.last_search_results = None
+
+if "last_formatted_results" not in st.session_state:
+    st.session_state.last_formatted_results = None
+
+# Sidebar
+with st.sidebar:
+    st.header("📊 16 Sources Searched")
+    with st.expander("View All Sources", expanded=False):
+        st.markdown("""
+        **Web & Knowledge:**
+        - DuckDuckGo Web Search
+        - DuckDuckGo Instant Answers
+        - DuckDuckGo News
+        - Wikipedia
+        - Wikidata
+        
+        **Science & Research:**
+        - ArXiv (Scientific Papers)
+        - PubMed (Medical Research)
+        
+        **Reference:**
+        - OpenLibrary (Books)
+        - Dictionary API
+        - REST Countries
+        - Quotable (Quotes)
+        
+        **Developer:**
+        - GitHub Repositories
+        - Stack Overflow Q&A
+        
+        **Location & Environment:**
+        - Nominatim (Geocoding)
+        - wttr.in (Weather)
+        - OpenAQ (Air Quality)
+        """)
+    
+    st.divider()
+    st.header("🤖 AI Persona")
+    
+    selected_preset = st.selectbox(
+        "Choose a preset:",
+        options=list(PRESET_PROMPTS.keys()),
+        index=list(PRESET_PROMPTS.keys()).index(st.session_state.selected_preset),
+        key="preset_selector"
+    )
+    
+    if selected_preset != st.session_state.selected_preset:
+        st.session_state.selected_preset = selected_preset
+        if selected_preset != "Custom":
+            st.session_state.system_prompt = PRESET_PROMPTS[selected_preset]
+    
+    system_prompt = st.text_area(
+        "System prompt:",
+        value=st.session_state.system_prompt,
+        height=100,
+        placeholder="Enter instructions for how the AI should behave...",
+        key="system_prompt_input"
+    )
+    
+    if system_prompt != st.session_state.system_prompt:
+        st.session_state.system_prompt = system_prompt
+        if system_prompt not in PRESET_PROMPTS.values():
+            st.session_state.selected_preset = "Custom"
+    
+    st.divider()
+    st.header("⚙️ Model Settings")
+    temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1, 
+                           help="Higher = more creative, Lower = more focused")
+    max_tokens = st.slider("Max Tokens", 64, 512, 256, 64,
+                          help="Maximum length of the response")
+    
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ Clear Chat", type="secondary", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.last_search_results = None
+            st.session_state.last_formatted_results = None
+            st.rerun()
+    with col2:
+        if st.button("🔄 Reset", type="secondary", use_container_width=True):
+            st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
+            st.session_state.selected_preset = "Search Analyst"
+            st.rerun()
+    
+    st.divider()
+    st.caption("Model: TinyLLaMA 1.1B Chat v1.0")
+    st.caption("Quantization: Q4_K_M (~637 MB)")
+
+# Load model
+with st.spinner("Loading TinyLLaMA model... This may take a moment on first run."):
+    try:
+        model = load_model()
+        st.session_state.model_loaded = True
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        st.info("The app will still work for searching, but AI analysis won't be available.")
+        model = None
+
+if st.session_state.model_loaded:
+    st.success("✅ Model loaded and ready!", icon="✅")
+
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Search functions
 def search_all_sources(query: str) -> dict:
     """Search ALL sources simultaneously."""
     results = {}
@@ -1263,359 +1299,65 @@ def summarize_results_for_ai(results: dict) -> str:
     
     return "\n".join(summary_parts) if summary_parts else "No relevant search results found."
 
-# ==================== STREAMLIT APP ====================
-
-st.set_page_config(
-    page_title="AI Search Assistant",
-    page_icon="🔍🤖",
-    layout="wide"
-)
-
-st.title("🔍🤖 AI-Powered Multi-Source Search")
-st.markdown("*Search 16 sources simultaneously, then get AI-powered analysis*")
-
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "model_loaded" not in st.session_state:
-    st.session_state.model_loaded = False
-
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
-
-if "selected_preset" not in st.session_state:
-    st.session_state.selected_preset = "Search Analyst"
-
-if "last_search_results" not in st.session_state:
-    st.session_state.last_search_results = None
-
-if "last_formatted_results" not in st.session_state:
-    st.session_state.last_formatted_results = None
-
-# Sidebar
-with st.sidebar:
-    st.header("📊 16 Sources Searched")
-    with st.expander("View All Sources", expanded=False):
-        st.markdown("""
-        **Web & Knowledge:**
-        - DuckDuckGo Web Search
-        - DuckDuckGo Instant Answers
-        - DuckDuckGo News
-        - Wikipedia
-        - Wikidata
-        
-        **Science & Research:**
-        - ArXiv (Scientific Papers)
-        - PubMed (Medical Research)
-        
-        **Reference:**
-        - OpenLibrary (Books)
-        - Dictionary API
-        - REST Countries
-        - Quotable (Quotes)
-        
-        **Developer:**
-        - GitHub Repositories
-        - Stack Overflow Q&A
-        
-        **Location & Environment:**
-        - Nominatim (Geocoding)
-        - wttr.in (Weather)
-        - OpenAQ (Air Quality)
-        """)
+# Chat input
+if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     
-    st.divider()
-    st.header("🎯 Input Mode")
-    
-    # Mode selection
-    mode = st.radio(
-        "Select how to handle queries:",
-        options=["Auto-detect", "Search Mode", "Chat Mode", "Deep Think"],
-        index=0,
-        help="""
-        • Auto-detect: Let AI decide based on query
-        • Search Mode: Always search all sources first
-        • Chat Mode: Direct conversation with AI
-        • Deep Think: AI analysis without search
-        """
-    )
-    
-    if mode == "Auto-detect":
-        st.info("AI will decide: Natural conversation → Chat, Information-seeking → Search")
-    elif mode == "Search Mode":
-        st.info("Always searches 16 sources for factual information")
-    elif mode == "Chat Mode":
-        st.info("Direct conversation with AI (no search)")
-    else:  # Deep Think
-        st.info("AI analyzes and reasons without external search")
-    
-    st.divider()
-    st.header("🤖 AI Persona")
-    
-    selected_preset = st.selectbox(
-        "Choose a preset:",
-        options=list(PRESET_PROMPTS.keys()),
-        index=list(PRESET_PROMPTS.keys()).index(st.session_state.selected_preset),
-        key="preset_selector"
-    )
-    
-    if selected_preset != st.session_state.selected_preset:
-        st.session_state.selected_preset = selected_preset
-        if selected_preset != "Custom":
-            st.session_state.system_prompt = PRESET_PROMPTS[selected_preset]
-    
-    system_prompt = st.text_area(
-        "System prompt:",
-        value=st.session_state.system_prompt,
-        height=100,
-        placeholder="Enter instructions for how the AI should behave...",
-        key="system_prompt_input"
-    )
-    
-    if system_prompt != st.session_state.system_prompt:
-        st.session_state.system_prompt = system_prompt
-        if system_prompt not in PRESET_PROMPTS.values():
-            st.session_state.selected_preset = "Custom"
-    
-    st.divider()
-    st.header("⚙️ Model Settings")
-    temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1, 
-                           help="Higher = more creative, Lower = more focused")
-    max_tokens = st.slider("Max Tokens", 64, 512, 256, 64,
-                          help="Maximum length of the response")
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear Chat", type="secondary", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.last_search_results = None
-            st.session_state.last_formatted_results = None
-            st.rerun()
-    with col2:
-        if st.button("🔄 Reset", type="secondary", use_container_width=True):
-            st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
-            st.session_state.selected_preset = "Search Analyst"
-            st.rerun()
-    
-    st.divider()
-    st.caption("Model: TinyLLaMA 1.1B Chat v1.0")
-    st.caption("Quantization: Q4_K_M (~637 MB)")
-
-# Load model
-with st.spinner("Loading TinyLLaMA model... This may take a moment on first run."):
-    try:
-        model = load_model()
-        st.session_state.model_loaded = True
-    except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
-        st.info("The app will still work for searching, but AI analysis won't be available.")
-        model = None
-
-if st.session_state.model_loaded:
-    st.success("✅ Model loaded and ready!", icon="✅")
-
-# Display chat history with mode icons
-for message in st.session_state.messages:
-    # Check if message has mode metadata
-    mode_icon = "💬"  # Default chat icon
-    
-    if "metadata" in message:
-        if message["metadata"] == "search":
-            mode_icon = "🔍"
-        elif message["metadata"] == "deep_think":
-            mode_icon = "🤔"
-    
-    with st.chat_message(message["role"]):
-        # Display mode icon if it's a user message
-        if message["role"] == "user":
-            col1, col2 = st.columns([0.9, 0.1])
-            with col1:
-                st.markdown(message["content"])
-            with col2:
-                st.markdown(f"**{mode_icon}**")
-        else:
-            st.markdown(message["content"])
-
-# Main chat input with mode hint
-if prompt := st.chat_input("Ask anything... (Type normally, AI will detect if search is needed)"):
-    # Determine mode based on sidebar selection
-    if mode == "Auto-detect":
-        detected_mode = detect_mode(prompt)
-        mode_display = "🔍 Search" if detected_mode == "search" else "💬 Chat" if detected_mode == "chat" else "🤔 Deep Think"
-    elif mode == "Search Mode":
-        detected_mode = "search"
-        mode_display = "🔍 Search"
-    elif mode == "Chat Mode":
-        detected_mode = "chat"
-        mode_display = "💬 Chat"
-    else:  # Deep Think
-        detected_mode = "deep_think"
-        mode_display = "🤔 Deep Think"
-    
-    # Store the query with its mode
-    st.session_state.messages.append({
-        "role": "user", 
-        "content": prompt,
-        "metadata": detected_mode
-    })
-    
-    # Display user message with mode icon
     with st.chat_message("user"):
-        col1, col2 = st.columns([0.9, 0.1])
-        with col1:
-            st.markdown(prompt)
-        with col2:
-            mode_icon = "🔍" if detected_mode == "search" else "💬" if detected_mode == "chat" else "🤔"
-            st.markdown(f"**{mode_icon}**")
+        st.markdown(prompt)
     
-    # Process based on mode
     with st.chat_message("assistant"):
-        if detected_mode == "search":
-            # Perform search
-            st.caption("🔎 Searching all 16 sources simultaneously...")
-            
-            with st.spinner("Searching across 16 sources..."):
-                search_results = search_all_sources(prompt)
-                st.session_state.last_search_results = search_results
-            
-            formatted_results = format_results(prompt, search_results)
-            st.session_state.last_formatted_results = formatted_results
-            
-            tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
-            
-            with tab1:
-                if model and st.session_state.model_loaded:
-                    with st.spinner("AI is analyzing the search results..."):
-                        search_summary = summarize_results_for_ai(search_results)
-                        
-                        enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
+        st.caption("🔎 Searching all 16 sources simultaneously...")
+        
+        with st.spinner("Searching across 16 sources..."):
+            search_results = search_all_sources(prompt)
+            st.session_state.last_search_results = search_results
+        
+        formatted_results = format_results(prompt, search_results)
+        st.session_state.last_formatted_results = formatted_results
+        
+        tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
+        
+        with tab1:
+            if model and st.session_state.model_loaded:
+                with st.spinner("AI is analyzing the results..."):
+                    search_summary = summarize_results_for_ai(search_results)
+                    
+                    enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
 
 Search Results:
 {search_summary}
 
 Please provide a helpful, synthesized response based on the above information."""
-                        
-                        temp_messages = st.session_state.messages.copy()
-                        temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
-                        
-                        ai_response = generate_response(
-                            model,
-                            temp_messages,
-                            system_prompt=st.session_state.system_prompt,
-                            max_tokens=max_tokens,
-                            temperature=temperature
-                        )
-                    st.markdown("### 🤖 AI Analysis of Search Results")
-                    st.markdown(ai_response)
-                    final_response = ai_response
-                else:
-                    st.warning("AI model not loaded. Showing search results only.")
-                    st.markdown("### 📊 Search Results")
-                    st.markdown(formatted_results)
-                    final_response = formatted_results
-            
-            with tab2:
-                st.markdown("### 📊 Search Results")
-                st.markdown(formatted_results)
-            
-            with tab3:
-                st.markdown("### 📈 Raw Data from All Sources")
-                for source, data in search_results.items():
-                    with st.expander(f"📌 {source.replace('_', ' ').title()}"):
-                        st.json(data)
-            
-        elif detected_mode == "deep_think":
-            # Deep think mode - AI analysis without search
-            if model and st.session_state.model_loaded:
-                with st.spinner("🤔 AI is thinking deeply about this..."):
-                    # Use a different prompt for deep thinking
-                    deep_think_prompt = f"""The user has asked: "{prompt}"
-
-Please provide a thoughtful, in-depth analysis or answer. Consider multiple perspectives, 
-provide detailed reasoning, and show your thought process. Don't search for external 
-information - rely on your knowledge and reasoning abilities."""
-
+                    
                     temp_messages = st.session_state.messages.copy()
-                    temp_messages[-1] = {"role": "user", "content": deep_think_prompt}
+                    temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
                     
                     ai_response = generate_response(
                         model,
                         temp_messages,
                         system_prompt=st.session_state.system_prompt,
-                        max_tokens=max_tokens * 2,  # Allow longer responses for deep thinking
-                        temperature=temperature
-                    )
-                st.markdown("### 🤔 Deep Think Analysis")
-                st.markdown(ai_response)
-                final_response = ai_response
-            else:
-                st.error("AI model not available for deep thinking.")
-                final_response = "I need the AI model to perform deep thinking analysis."
-        
-        else:  # Chat mode
-            # Direct AI conversation without search
-            if model and st.session_state.model_loaded:
-                with st.spinner("💬 Thinking..."):
-                    # Regular chat without search enhancement
-                    ai_response = generate_response(
-                        model,
-                        st.session_state.messages,
-                        system_prompt=st.session_state.system_prompt,
                         max_tokens=max_tokens,
                         temperature=temperature
                     )
+                st.markdown("### 🤖 AI Analysis")
                 st.markdown(ai_response)
-                final_response = ai_response
             else:
-                st.error("AI model not available for chat.")
-                final_response = "I need the AI model to chat with you."
+                st.warning("AI model not loaded. Showing search results only.")
+                ai_response = formatted_results
+        
+        with tab2:
+            st.markdown(formatted_results)
+        
+        with tab3:
+            for source, data in search_results.items():
+                with st.expander(f"📌 {source.replace('_', ' ').title()}"):
+                    st.json(data)
     
-    # Store the assistant's response
+    final_response = f"**AI Analysis:**\n{ai_response}\n\n---\n\n**See tabs above for detailed search results and raw data.**"
     st.session_state.messages.append({
         "role": "assistant", 
-        "content": final_response
+        "content": ai_response if model else formatted_results
     })
-
-# Add quick action buttons
-st.divider()
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.button("🔍 Quick Search Example", use_container_width=True):
-        st.session_state.messages.append({
-            "role": "user",
-            "content": "What is quantum computing?",
-            "metadata": "search"
-        })
-        st.rerun()
-
-with col2:
-    if st.button("💬 Chat Example", use_container_width=True):
-        st.session_state.messages.append({
-            "role": "user",
-            "content": "How are you doing today?",
-            "metadata": "chat"
-        })
-        st.rerun()
-
-with col3:
-    if st.button("🤔 Deep Think Example", use_container_width=True):
-        st.session_state.messages.append({
-            "role": "user",
-            "content": "What is the meaning of life from a philosophical perspective?",
-            "metadata": "deep_think"
-        })
-        st.rerun()
-
-# Footer with mode explanation
-st.divider()
-st.caption("""
-**Mode Guide:**
-- **🔍 Search Mode**: Searches 16 sources for factual information. Best for "what", "who", "where", "when", "why" questions.
-- **💬 Chat Mode**: Direct conversation with AI. Best for greetings, opinions, explanations, and discussions.
-- **🤔 Deep Think**: AI analysis without external search. Best for philosophical questions, reasoning, and creative thinking.
-- **Auto-detect**: AI automatically chooses the best mode based on your query.
-""")
+ 
+ 
