@@ -5,10 +5,10 @@ import xml.etree.ElementTree as ET
 import concurrent.futures
 import arxiv
 import wikipedia
+import re
 from pathlib import Path
-from ctransformers import AutoModelForCausalLM
 
-# ==================== SERVICE FUNCTIONS ====================
+# ==================== ALL SERVICE FUNCTIONS IN ONE FILE ====================
 
 # ArXiv Service
 def search_arxiv(query: str, max_results: int = 5):
@@ -39,7 +39,7 @@ def search_arxiv(query: str, max_results: int = 5):
     except Exception as e:
         return [{"error": str(e)}]
 
-# DuckDuckGo Services
+# DuckDuckGo Web Search
 def search_duckduckgo(query: str, max_results: int = 8):
     """Search DuckDuckGo web results."""
     try:
@@ -91,6 +91,7 @@ def search_duckduckgo(query: str, max_results: int = 8):
     except Exception as e:
         return [{"error": str(e)}]
 
+# DuckDuckGo Instant Answer
 def get_instant_answer(query: str):
     """Get instant answer from DuckDuckGo."""
     try:
@@ -113,6 +114,7 @@ def get_instant_answer(query: str):
     except Exception as e:
         return {"error": str(e)}
 
+# DuckDuckGo News
 def search_news(query: str, max_results: int = 5):
     """Search news using DuckDuckGo."""
     try:
@@ -128,9 +130,9 @@ def search_news(query: str, max_results: int = 5):
         
         response = requests.get(url, params=params, headers=headers, timeout=15)
         
-        import re
         results = []
         
+        # Extract titles and snippets
         titles = re.findall(r'<a[^>]*class="result__url"[^>]*>([^<]+)</a>', response.text)
         snippets = re.findall(r'<a[^>]*class="result__snippet"[^>]*>([^<]+)</a>', response.text)
         
@@ -335,6 +337,7 @@ def search_pubmed(query: str, max_results: int = 5):
     try:
         base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
         
+        # Search for article IDs
         search_url = f"{base_url}/esearch.fcgi"
         search_params = {
             "db": "pubmed",
@@ -352,6 +355,7 @@ def search_pubmed(query: str, max_results: int = 5):
         if not ids:
             return [{"message": "No articles found"}]
         
+        # Fetch article details
         fetch_url = f"{base_url}/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
@@ -407,7 +411,7 @@ def search_pubmed(query: str, max_results: int = 5):
     except Exception as e:
         return [{"error": str(e)}]
 
-# Nominatim Service
+# Nominatim Service (Geocoding)
 def geocode_location(location: str):
     """Geocode a location using Nominatim."""
     try:
@@ -497,7 +501,7 @@ def get_definition(word: str):
 
 # Countries Service
 def search_country(query: str):
-    """Search for country information using REST Countries API."""
+    """Search for country information."""
     try:
         url = f"https://restcountries.com/v3.1/name/{query}"
         response = requests.get(url, timeout=15)
@@ -672,275 +676,60 @@ def search_stackoverflow(query: str, max_results: int = 6):
     except Exception as e:
         return [{"error": str(e)}]
 
-# ==================== HUGGING FACE MODEL SETUP ====================
-
-MODEL_DIR = Path("models")
-MODEL_PATH = MODEL_DIR / "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
-MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
-
-PRESET_PROMPTS = {
-    "Search Analyst": """You are an intelligent search analyst. Your role is to:
-- Analyze search results from multiple sources and provide clear, synthesized insights
-- Identify the most relevant and accurate information from ALL search results provided
-- Present findings in a well-organized, easy-to-understand format
-- Highlight key facts, trends, and connections between different sources
-- Be objective and cite which sources your information comes from
-- Use ALL available information from the search results
-- DO NOT summarize or truncate the search results - provide full analysis based on them""",
-    "Khisba GIS": """You are Khisba GIS, an enthusiastic remote sensing and GIS expert. Your personality:
-- Name: Khisba GIS
-- Role: Remote sensing and GIS expert
-- Style: Warm, friendly, and approachable
-- Expertise: Deep knowledge of satellite imagery, vegetation indices, and geospatial analysis
-- Humor: Light and professional
-- Always eager to explore new remote sensing challenges
-
-Guidelines:
-- Focus primarily on remote sensing, GIS, and satellite imagery topics
-- Be naturally enthusiastic about helping with vegetation indices and analysis
-- Share practical examples and real-world applications
-- Show genuine interest in the user's remote sensing challenges
-- If topics go outside remote sensing, gently guide back to GIS
-- Always introduce yourself as Khisba GIS when asked who you are
-- Use ALL available search results for comprehensive answers""",
-    "Default Assistant": "You are a helpful, friendly AI assistant. Provide clear and comprehensive answers based on ALL the search results provided.",
-    "Professional Expert": "You are a professional expert. Provide detailed, accurate, and well-structured responses. Use formal language and cite reasoning when appropriate. Use ALL search results for comprehensive analysis.",
-    "Creative Writer": "You are a creative writer with a vivid imagination. Use descriptive language, metaphors, and engaging storytelling in your responses. Incorporate ALL search results into your creative narrative.",
-    "Code Helper": "You are a programming expert. Provide clean, well-commented code examples. Explain technical concepts clearly and suggest best practices. Use ALL relevant search results for comprehensive solutions.",
-    "Friendly Tutor": "You are a patient and encouraging tutor. Explain concepts step by step, use simple examples, and ask questions to ensure understanding. Use ALL search results to provide thorough explanations.",
-    "Concise Responder": "You are brief and to the point. Give short, direct answers without unnecessary elaboration, but still use ALL relevant search results.",
-    "Custom": ""
-}
-
-def download_model():
-    """Download the model from Hugging Face with progress."""
-    MODEL_DIR.mkdir(exist_ok=True)
-    
-    try:
-        response = requests.get(MODEL_URL, stream=True, timeout=30)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to download model: {str(e)}")
-    
-    total_size = int(response.headers.get('content-length', 0))
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    downloaded = 0
-    try:
-        with open(MODEL_PATH, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        progress = downloaded / total_size
-                        progress_bar.progress(progress)
-                        status_text.text(f"Downloading: {downloaded / (1024**2):.1f} / {total_size / (1024**2):.1f} MB")
-    except Exception as e:
-        if MODEL_PATH.exists():
-            MODEL_PATH.unlink()
-        raise Exception(f"Download interrupted: {str(e)}")
-    
-    if total_size > 0 and downloaded != total_size:
-        if MODEL_PATH.exists():
-            MODEL_PATH.unlink()
-        raise Exception(f"Incomplete download: got {downloaded} bytes, expected {total_size}")
-    
-    progress_bar.empty()
-    status_text.empty()
-    return True
-
-@st.cache_resource(show_spinner=False)
-def load_model():
-    """Load the TinyLLaMA model using ctransformers."""
-    from ctransformers import AutoModelForCausalLM
-    
-    if not MODEL_PATH.exists():
-        with st.spinner("Downloading TinyLLaMA model (~637 MB)..."):
-            download_model()
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        str(MODEL_DIR),
-        model_file=MODEL_PATH.name,
-        model_type="llama",
-        context_length=2048,
-        gpu_layers=0
-    )
-    return model
-
-def format_prompt(messages, system_prompt=""):
-    """Format conversation history for TinyLLaMA chat format with system prompt."""
-    prompt = ""
-    
-    if system_prompt:
-        prompt += f"<|system|>\n{system_prompt}</s>\n"
-    
-    for msg in messages:
-        if msg["role"] == "user":
-            prompt += f"<|user|>\n{msg['content']}</s>\n"
-        elif msg["role"] == "assistant":
-            prompt += f"<|assistant|>\n{msg['content']}</s>\n"
-    prompt += "<|assistant|>\n"
-    return prompt
-
-def truncate_messages(messages, max_messages=6):
-    """Keep only the most recent messages to fit within context limit."""
-    if len(messages) > max_messages:
-        return messages[-max_messages:]
-    return messages
-
-def generate_response(model, messages, system_prompt="", max_tokens=512, temperature=0.7):
-    """Generate a response from the model."""
-    truncated_messages = truncate_messages(messages)
-    prompt = format_prompt(truncated_messages, system_prompt)
-    
-    response = model(
-        prompt,
-        max_new_tokens=max_tokens,
-        temperature=temperature,
-        top_p=0.95,
-        stop=["</s>", "<|user|>", "<|assistant|>", "<|system|>"]
-    )
-    
-    return response.strip()
-
 # ==================== STREAMLIT APP ====================
 
 st.set_page_config(
     page_title="AI Search Assistant",
-    page_icon="🔍🤖",
+    page_icon="🔍",
     layout="wide"
 )
 
-st.title("🔍🤖 AI-Powered Multi-Source Search")
-st.markdown("*Search 16 sources simultaneously, then get AI-powered analysis*")
+st.title("🔍 Multi-Source Search Assistant")
+st.markdown("*Searches all 16 sources simultaneously*")
 
-# Initialize session state
+with st.sidebar:
+    st.header("📊 16 Sources Searched")
+    st.markdown("""
+    **Web & Knowledge:**
+    - DuckDuckGo Web Search
+    - DuckDuckGo Instant Answers
+    - DuckDuckGo News
+    - Wikipedia
+    - Wikidata
+    
+    **Science & Research:**
+    - ArXiv (Scientific Papers)
+    - PubMed (Medical Research)
+    
+    **Reference:**
+    - OpenLibrary (Books)
+    - Dictionary API
+    - REST Countries
+    - Quotable (Quotes)
+    
+    **Developer:**
+    - GitHub Repositories
+    - Stack Overflow Q&A
+    
+    **Location & Environment:**
+    - Nominatim (Geocoding)
+    - wttr.in (Weather)
+    - OpenAQ (Air Quality)
+    """)
+    
+    st.divider()
+    
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "model_loaded" not in st.session_state:
-    st.session_state.model_loaded = False
-
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
-
-if "selected_preset" not in st.session_state:
-    st.session_state.selected_preset = "Search Analyst"
-
-if "last_search_results" not in st.session_state:
-    st.session_state.last_search_results = None
-
-if "last_formatted_results" not in st.session_state:
-    st.session_state.last_formatted_results = None
-
-# Sidebar
-with st.sidebar:
-    st.header("📊 16 Sources Searched")
-    with st.expander("View All Sources", expanded=False):
-        st.markdown("""
-        **Web & Knowledge:**
-        - DuckDuckGo Web Search
-        - DuckDuckGo Instant Answers
-        - DuckDuckGo News
-        - Wikipedia
-        - Wikidata
-        
-        **Science & Research:**
-        - ArXiv (Scientific Papers)
-        - PubMed (Medical Research)
-        
-        **Reference:**
-        - OpenLibrary (Books)
-        - Dictionary API
-        - REST Countries
-        - Quotable (Quotes)
-        
-        **Developer:**
-        - GitHub Repositories
-        - Stack Overflow Q&A
-        
-        **Location & Environment:**
-        - Nominatim (Geocoding)
-        - wttr.in (Weather)
-        - OpenAQ (Air Quality)
-        """)
-    
-    st.divider()
-    st.header("🤖 AI Persona")
-    
-    selected_preset = st.selectbox(
-        "Choose a preset:",
-        options=list(PRESET_PROMPTS.keys()),
-        index=list(PRESET_PROMPTS.keys()).index(st.session_state.selected_preset),
-        key="preset_selector"
-    )
-    
-    if selected_preset != st.session_state.selected_preset:
-        st.session_state.selected_preset = selected_preset
-        if selected_preset != "Custom":
-            st.session_state.system_prompt = PRESET_PROMPTS[selected_preset]
-    
-    system_prompt = st.text_area(
-        "System prompt:",
-        value=st.session_state.system_prompt,
-        height=150,
-        placeholder="Enter instructions for how the AI should behave...",
-        key="system_prompt_input"
-    )
-    
-    if system_prompt != st.session_state.system_prompt:
-        st.session_state.system_prompt = system_prompt
-        if system_prompt not in PRESET_PROMPTS.values():
-            st.session_state.selected_preset = "Custom"
-    
-    st.divider()
-    st.header("⚙️ Model Settings")
-    temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1, 
-                           help="Higher = more creative, Lower = more focused")
-    max_tokens = st.slider("Max Tokens", 256, 1024, 512, 64,
-                          help="Maximum length of the response")
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear Chat", type="secondary", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.last_search_results = None
-            st.session_state.last_formatted_results = None
-            st.rerun()
-    with col2:
-        if st.button("🔄 Reset", type="secondary", use_container_width=True):
-            st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
-            st.session_state.selected_preset = "Search Analyst"
-            st.rerun()
-    
-    st.divider()
-    st.caption("Model: TinyLLaMA 1.1B Chat v1.0")
-    st.caption("Quantization: Q4_K_M (~637 MB)")
-
-# Load model
-with st.spinner("Loading TinyLLaMA model... This may take a moment on first run."):
-    try:
-        model = load_model()
-        st.session_state.model_loaded = True
-    except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
-        st.info("The app will still work for searching, but AI analysis won't be available.")
-        model = None
-
-if st.session_state.model_loaded:
-    st.success("✅ Model loaded and ready!", icon="✅")
-
-# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Search functions
 def search_all_sources(query: str) -> dict:
     """Search ALL sources simultaneously with more results."""
     results = {}
@@ -985,82 +774,93 @@ def format_results(query: str, results: dict) -> str:
     """Format all search results into a readable response."""
     output = [f"## Search Results for: *{query}*\n"]
     
+    # Instant Answer
     if "duckduckgo_instant" in results:
         instant = results["duckduckgo_instant"]
-        if isinstance(instant, dict) and instant.get("answer"):
+        if isinstance(instant, dict) and "error" not in instant and instant.get("answer"):
             output.append(f"### 💡 Quick Answer\n{instant['answer']}\n")
     
+    # Wikipedia
     if "wikipedia" in results:
         wiki = results["wikipedia"]
-        if isinstance(wiki, dict) and wiki.get("exists"):
+        if isinstance(wiki, dict) and "error" not in wiki and wiki.get("exists"):
             output.append(f"### 📚 Wikipedia: {wiki.get('title', 'N/A')}")
             output.append(f"{wiki.get('summary', 'No summary')[:800]}...")
             output.append(f"[Read more]({wiki.get('url', '')})\n")
     
+    # Web Results
     if "duckduckgo" in results:
         ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and ddg and "error" not in str(ddg[0]):
+        if isinstance(ddg, list) and ddg and len(ddg) > 0 and "error" not in ddg[0]:
             output.append("### 🌐 Web Results")
-            for item in ddg[:5]:
-                if isinstance(item, dict):
-                    output.append(f"- **{item.get('title', 'N/A')}**")
-                    output.append(f"  {item.get('body', '')[:250]}...")
+            for i, item in enumerate(ddg[:5], 1):
+                if isinstance(item, dict) and "error" not in item:
+                    output.append(f"{i}. **{item.get('title', 'N/A')}**")
+                    if item.get('body'):
+                        output.append(f"   {item.get('body', '')[:250]}...")
                     if item.get('url'):
-                        output.append(f"  [Link]({item.get('url')})")
+                        output.append(f"   [Link]({item.get('url')})")
             output.append("")
     
+    # ArXiv Papers
     if "arxiv" in results:
         arxiv_data = results["arxiv"]
-        if isinstance(arxiv_data, list) and arxiv_data and "error" not in str(arxiv_data[0]) and "message" not in str(arxiv_data[0]):
+        if isinstance(arxiv_data, list) and arxiv_data and len(arxiv_data) > 0 and "error" not in arxiv_data[0]:
             output.append("### 🔬 Scientific Papers (ArXiv)")
-            for paper in arxiv_data[:4]:
-                if isinstance(paper, dict) and paper.get("title"):
+            for i, paper in enumerate(arxiv_data[:4], 1):
+                if isinstance(paper, dict) and "error" not in paper:
                     authors = ", ".join(paper.get("authors", [])[:3])
-                    output.append(f"- **{paper.get('title', 'N/A')}**")
-                    output.append(f"  Authors: {authors} | Published: {paper.get('published', 'N/A')}")
-                    output.append(f"  {paper.get('summary', '')[:300]}...")
+                    output.append(f"{i}. **{paper.get('title', 'N/A')}**")
+                    output.append(f"   Authors: {authors} | Published: {paper.get('published', 'N/A')}")
+                    if paper.get('summary'):
+                        output.append(f"   {paper.get('summary', '')[:300]}...")
                     if paper.get('url'):
-                        output.append(f"  [View Paper]({paper.get('url')})")
+                        output.append(f"   [View Paper]({paper.get('url')})")
             output.append("")
     
+    # PubMed Articles
     if "pubmed" in results:
         pubmed_data = results["pubmed"]
-        if isinstance(pubmed_data, list) and pubmed_data and "error" not in str(pubmed_data[0]) and "message" not in str(pubmed_data[0]):
+        if isinstance(pubmed_data, list) and pubmed_data and len(pubmed_data) > 0 and "error" not in pubmed_data[0]:
             output.append("### 🏥 Medical Research (PubMed)")
-            for article in pubmed_data[:4]:
-                if isinstance(article, dict) and article.get("title"):
+            for i, article in enumerate(pubmed_data[:4], 1):
+                if isinstance(article, dict) and "error" not in article:
                     authors = ", ".join(article.get("authors", [])[:3])
-                    output.append(f"- **{article.get('title', 'N/A')}**")
-                    output.append(f"  Authors: {authors} | Year: {article.get('year', 'N/A')}")
-                    output.append(f"  {article.get('abstract', '')[:300]}...")
+                    output.append(f"{i}. **{article.get('title', 'N/A')}**")
+                    output.append(f"   Authors: {authors} | Year: {article.get('year', 'N/A')}")
+                    if article.get('abstract'):
+                        output.append(f"   {article.get('abstract', '')[:300]}...")
                     if article.get('url'):
-                        output.append(f"  [View Article]({article.get('url')})")
+                        output.append(f"   [View Article]({article.get('url')})")
             output.append("")
     
+    # Books
     if "books" in results:
         books_data = results["books"]
-        if isinstance(books_data, list) and books_data and "error" not in str(books_data[0]) and "message" not in str(books_data[0]):
+        if isinstance(books_data, list) and books_data and len(books_data) > 0 and "error" not in books_data[0]:
             output.append("### 📖 Books (OpenLibrary)")
-            for book in books_data[:4]:
-                if isinstance(book, dict) and book.get("title"):
+            for i, book in enumerate(books_data[:4], 1):
+                if isinstance(book, dict) and "error" not in book:
                     authors = ", ".join(book.get("authors", [])[:3])
-                    output.append(f"- **{book.get('title', 'N/A')}**")
-                    output.append(f"  Authors: {authors} | First Published: {book.get('first_publish_year', 'N/A')}")
+                    output.append(f"{i}. **{book.get('title', 'N/A')}**")
+                    output.append(f"   Authors: {authors} | First Published: {book.get('first_publish_year', 'N/A')}")
                     if book.get('url'):
-                        output.append(f"  [View Book]({book.get('url')})")
+                        output.append(f"   [View Book]({book.get('url')})")
             output.append("")
     
+    # Wikidata
     if "wikidata" in results:
         wikidata = results["wikidata"]
-        if isinstance(wikidata, list) and wikidata and "error" not in str(wikidata[0]) and "message" not in str(wikidata[0]):
+        if isinstance(wikidata, list) and wikidata and len(wikidata) > 0 and "error" not in wikidata[0]:
             output.append("### 🗃️ Wikidata Entities")
-            for entity in wikidata[:4]:
-                if isinstance(entity, dict) and entity.get("label"):
-                    output.append(f"- **{entity.get('label', 'N/A')}**: {entity.get('description', 'No description')}")
+            for i, entity in enumerate(wikidata[:4], 1):
+                if isinstance(entity, dict) and "error" not in entity:
+                    output.append(f"{i}. **{entity.get('label', 'N/A')}**: {entity.get('description', 'No description')}")
                     if entity.get('url'):
-                        output.append(f"  [View]({entity.get('url')})")
+                        output.append(f"   [View]({entity.get('url')})")
             output.append("")
     
+    # Weather
     if "weather" in results:
         weather = results["weather"]
         if isinstance(weather, dict) and "error" not in weather and weather.get("temperature_c"):
@@ -1070,20 +870,21 @@ def format_results(query: str, results: dict) -> str:
             output.append(f"- Condition: {weather.get('condition', 'N/A')}")
             output.append(f"- Humidity: {weather.get('humidity', 'N/A')}%")
             output.append(f"- Wind: {weather.get('wind_speed_kmph', 'N/A')} km/h")
-            output.append(f"- Precipitation: {weather.get('precipitation_mm', 'N/A')} mm")
             output.append("")
     
+    # Air Quality
     if "air_quality" in results:
         aq = results["air_quality"]
         if isinstance(aq, dict) and "error" not in aq and aq.get("data"):
             output.append("### 🌬️ Air Quality")
             output.append(f"- City: {aq.get('city', 'N/A')}")
-            for loc in aq.get("data", [])[:3]:
-                output.append(f"- Location: {loc.get('location', 'N/A')}")
-                for m in loc.get("measurements", [])[:4]:
-                    output.append(f"  - {m.get('parameter', 'N/A')}: {m.get('value', 'N/A')} {m.get('unit', '')}")
+            for i, loc in enumerate(aq.get("data", [])[:2], 1):
+                output.append(f"{i}. Location: {loc.get('location', 'N/A')}")
+                for m in loc.get("measurements", [])[:3]:
+                    output.append(f"   - {m.get('parameter', 'N/A')}: {m.get('value', 'N/A')} {m.get('unit', '')}")
             output.append("")
     
+    # Geocoding
     if "geocoding" in results:
         geo = results["geocoding"]
         if isinstance(geo, dict) and "error" not in geo and geo.get("display_name"):
@@ -1094,23 +895,26 @@ def format_results(query: str, results: dict) -> str:
                 output.append(f"- [View on Map]({geo.get('osm_url')})")
             output.append("")
     
+    # News
     if "news" in results:
         news_data = results["news"]
-        if isinstance(news_data, list) and news_data and "error" not in str(news_data[0]) and "message" not in str(news_data[0]):
+        if isinstance(news_data, list) and news_data and len(news_data) > 0 and "error" not in news_data[0]:
             output.append("### 📰 News")
-            for article in news_data[:4]:
-                if isinstance(article, dict) and article.get("title"):
-                    output.append(f"- **{article.get('title', 'N/A')}**")
+            for i, article in enumerate(news_data[:4], 1):
+                if isinstance(article, dict) and "error" not in article:
+                    output.append(f"{i}. **{article.get('title', 'N/A')}**")
                     if article.get('source'):
-                        output.append(f"  Source: {article.get('source')}")
-                    output.append(f"  {article.get('body', '')[:200]}...")
+                        output.append(f"   Source: {article.get('source')}")
+                    if article.get('body'):
+                        output.append(f"   {article.get('body', '')[:200]}...")
                     if article.get('url'):
-                        output.append(f"  [Read Article]({article.get('url')})")
+                        output.append(f"   [Read Article]({article.get('url')})")
             output.append("")
     
+    # Dictionary
     if "dictionary" in results:
         dictionary = results["dictionary"]
-        if isinstance(dictionary, dict) and "error" not in dictionary and "message" not in dictionary and dictionary.get("word"):
+        if isinstance(dictionary, dict) and "error" not in dictionary and dictionary.get("word"):
             output.append(f"### 📖 Dictionary: {dictionary.get('word', 'N/A')}")
             phonetics = dictionary.get('phonetics', [])
             if phonetics:
@@ -1123,9 +927,10 @@ def format_results(query: str, results: dict) -> str:
                         output.append(f"  *Example: \"{defn.get('example')}\"*")
             output.append("")
     
+    # Country
     if "country" in results:
         country = results["country"]
-        if isinstance(country, dict) and "error" not in country and "message" not in country and country.get("name"):
+        if isinstance(country, dict) and "error" not in country and country.get("name"):
             output.append(f"### 🌍 Country: {country.get('name', 'N/A')} {country.get('flag_emoji', '')}")
             output.append(f"- **Official Name**: {country.get('official_name', 'N/A')}")
             output.append(f"- **Capital**: {country.get('capital', 'N/A')}")
@@ -1145,182 +950,54 @@ def format_results(query: str, results: dict) -> str:
                 output.append(f"- [View on Map]({country.get('map_url')})")
             output.append("")
     
+    # Quotes
     if "quotes" in results:
         quotes_data = results["quotes"]
-        if isinstance(quotes_data, list) and quotes_data and "error" not in str(quotes_data[0]) and "message" not in str(quotes_data[0]):
+        if isinstance(quotes_data, list) and quotes_data and len(quotes_data) > 0 and "error" not in quotes_data[0]:
             output.append("### 💬 Quotes")
-            for quote in quotes_data[:4]:
-                if isinstance(quote, dict) and quote.get("content"):
-                    output.append(f"> \"{quote.get('content', '')}\"")
-                    output.append(f"> — *{quote.get('author', 'Unknown')}*")
+            for i, quote in enumerate(quotes_data[:4], 1):
+                if isinstance(quote, dict) and "error" not in quote:
+                    output.append(f"{i}. > \"{quote.get('content', '')}\"")
+                    output.append(f"   > — *{quote.get('author', 'Unknown')}*")
                     output.append("")
     
+    # GitHub
     if "github" in results:
         github_data = results["github"]
-        if isinstance(github_data, list) and github_data and "error" not in str(github_data[0]) and "message" not in str(github_data[0]):
+        if isinstance(github_data, list) and github_data and len(github_data) > 0 and "error" not in github_data[0]:
             output.append("### 💻 GitHub Repositories")
-            for repo in github_data[:4]:
-                if isinstance(repo, dict) and repo.get("name"):
+            for i, repo in enumerate(github_data[:4], 1):
+                if isinstance(repo, dict) and "error" not in repo:
                     stars = repo.get('stars', 0)
-                    output.append(f"- **{repo.get('name', 'N/A')}** ⭐ {stars:,}")
-                    output.append(f"  {repo.get('description', 'No description')[:150]}...")
-                    output.append(f"  Language: {repo.get('language', 'N/A')} | Forks: {repo.get('forks', 0):,}")
+                    output.append(f"{i}. **{repo.get('name', 'N/A')}** ⭐ {stars:,}")
+                    if repo.get('description'):
+                        output.append(f"   {repo.get('description', '')[:150]}...")
+                    output.append(f"   Language: {repo.get('language', 'N/A')} | Forks: {repo.get('forks', 0):,}")
                     if repo.get('url'):
-                        output.append(f"  [View Repository]({repo.get('url')})")
+                        output.append(f"   [View Repository]({repo.get('url')})")
             output.append("")
     
+    # Stack Overflow
     if "stackoverflow" in results:
         so_data = results["stackoverflow"]
-        if isinstance(so_data, list) and so_data and "error" not in str(so_data[0]) and "message" not in str(so_data[0]):
+        if isinstance(so_data, list) and so_data and len(so_data) > 0 and "error" not in so_data[0]:
             output.append("### 🔧 Stack Overflow")
-            for q in so_data[:4]:
-                if isinstance(q, dict) and q.get("title"):
+            for i, q in enumerate(so_data[:4], 1):
+                if isinstance(q, dict) and "error" not in q:
                     answered_emoji = "✅" if q.get('is_answered') else "❓"
-                    output.append(f"- {answered_emoji} **{q.get('title', 'N/A')}**")
-                    output.append(f"  Score: {q.get('score', 0)} | Answers: {q.get('answer_count', 0)} | Views: {q.get('view_count', 0):,}")
+                    output.append(f"{i}. {answered_emoji} **{q.get('title', 'N/A')}**")
+                    output.append(f"   Score: {q.get('score', 0)} | Answers: {q.get('answer_count', 0)} | Views: {q.get('view_count', 0):,}")
                     tags = q.get('tags', [])[:4]
                     if tags:
-                        output.append(f"  Tags: {', '.join(tags)}")
+                        output.append(f"   Tags: {', '.join(tags)}")
                     if q.get('url'):
-                        output.append(f"  [View Question]({q.get('url')})")
+                        output.append(f"   [View Question]({q.get('url')})")
             output.append("")
     
     return "\n".join(output)
 
-def create_comprehensive_context(query: str, results: dict) -> str:
-    """Create comprehensive search context for AI with ALL details."""
-    context_parts = []
-    
-    context_parts.append(f"USER QUESTION: {query}")
-    context_parts.append("=" * 80)
-    context_parts.append("FULL SEARCH RESULTS FROM 16 SOURCES:")
-    context_parts.append("=" * 80)
-    
-    # 1. Instant Answer
-    if "duckduckgo_instant" in results:
-        instant = results["duckduckgo_instant"]
-        if isinstance(instant, dict) and instant.get("answer"):
-            context_parts.append(f"\n💡 INSTANT ANSWER:")
-            context_parts.append(f"Answer: {instant['answer']}")
-            if instant.get("heading"):
-                context_parts.append(f"Heading: {instant['heading']}")
-    
-    # 2. Wikipedia
-    if "wikipedia" in results:
-        wiki = results["wikipedia"]
-        if isinstance(wiki, dict) and wiki.get("exists"):
-            context_parts.append(f"\n📚 WIKIPEDIA:")
-            context_parts.append(f"Title: {wiki.get('title', 'N/A')}")
-            context_parts.append(f"Summary: {wiki.get('summary', '')}")
-            if wiki.get('categories'):
-                context_parts.append(f"Categories: {', '.join(wiki.get('categories', [])[:5])}")
-    
-    # 3. Web Results
-    if "duckduckgo" in results:
-        ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and ddg and "error" not in str(ddg[0]):
-            context_parts.append(f"\n🌐 WEB RESULTS:")
-            for i, item in enumerate(ddg[:6], 1):
-                if isinstance(item, dict):
-                    context_parts.append(f"{i}. {item.get('title', 'N/A')}")
-                    context_parts.append(f"   {item.get('body', '')}")
-    
-    # 4. Scientific Papers
-    if "arxiv" in results:
-        arxiv_data = results["arxiv"]
-        if isinstance(arxiv_data, list) and arxiv_data and "error" not in str(arxiv_data[0]) and "message" not in str(arxiv_data[0]):
-            context_parts.append(f"\n🔬 SCIENTIFIC PAPERS (arXiv):")
-            for i, paper in enumerate(arxiv_data[:5], 1):
-                if isinstance(paper, dict) and paper.get("title"):
-                    authors = ", ".join(paper.get("authors", [])[:4])
-                    context_parts.append(f"{i}. Title: {paper.get('title', 'N/A')}")
-                    context_parts.append(f"   Authors: {authors}")
-                    context_parts.append(f"   Summary: {paper.get('summary', '')[:400]}...")
-    
-    # 5. Medical Research
-    if "pubmed" in results:
-        pubmed_data = results["pubmed"]
-        if isinstance(pubmed_data, list) and pubmed_data and "error" not in str(pubmed_data[0]) and "message" not in str(pubmed_data[0]):
-            context_parts.append(f"\n🏥 MEDICAL RESEARCH (PubMed):")
-            for i, article in enumerate(pubmed_data[:4], 1):
-                if isinstance(article, dict) and article.get("title"):
-                    authors = ", ".join(article.get("authors", [])[:4])
-                    context_parts.append(f"{i}. Title: {article.get('title', 'N/A')}")
-                    context_parts.append(f"   Authors: {authors}")
-                    context_parts.append(f"   Year: {article.get('year', 'N/A')}")
-                    context_parts.append(f"   Abstract: {article.get('abstract', '')[:300]}...")
-    
-    # 6. Books
-    if "books" in results:
-        books_data = results["books"]
-        if isinstance(books_data, list) and books_data and "error" not in str(books_data[0]) and "message" not in str(books_data[0]):
-            context_parts.append(f"\n📖 BOOKS (OpenLibrary):")
-            for i, book in enumerate(books_data[:5], 1):
-                if isinstance(book, dict) and book.get("title"):
-                    authors = ", ".join(book.get("authors", [])[:3])
-                    context_parts.append(f"{i}. Title: {book.get('title', 'N/A')}")
-                    context_parts.append(f"   Authors: {authors}")
-                    context_parts.append(f"   Year: {book.get('first_publish_year', 'N/A')}")
-    
-    # 7. News
-    if "news" in results:
-        news_data = results["news"]
-        if isinstance(news_data, list) and news_data and "error" not in str(news_data[0]) and "message" not in str(news_data[0]):
-            context_parts.append(f"\n📰 NEWS:")
-            for i, article in enumerate(news_data[:4], 1):
-                if isinstance(article, dict) and article.get("title"):
-                    context_parts.append(f"{i}. Title: {article.get('title', 'N/A')}")
-                    context_parts.append(f"   Content: {article.get('body', '')[:200]}...")
-    
-    # 8. Weather
-    if "weather" in results:
-        weather = results["weather"]
-        if isinstance(weather, dict) and "error" not in weather and weather.get("temperature_c"):
-            context_parts.append(f"\n🌤️ WEATHER:")
-            context_parts.append(f"Location: {weather.get('location', 'N/A')}")
-            context_parts.append(f"Temperature: {weather.get('temperature_c', 'N/A')}°C / {weather.get('temperature_f', 'N/A')}°F")
-            context_parts.append(f"Condition: {weather.get('condition', 'N/A')}")
-            context_parts.append(f"Humidity: {weather.get('humidity', 'N/A')}%")
-    
-    # 9. Country Info
-    if "country" in results:
-        country = results["country"]
-        if isinstance(country, dict) and "error" not in country and "message" not in country and country.get("name"):
-            context_parts.append(f"\n🌍 COUNTRY INFO:")
-            context_parts.append(f"Country: {country.get('name', 'N/A')}")
-            context_parts.append(f"Capital: {country.get('capital', 'N/A')}")
-            context_parts.append(f"Population: {country.get('population', 'N/A'):,}" if isinstance(country.get('population'), int) else f"Population: {country.get('population', 'N/A')}")
-            context_parts.append(f"Region: {country.get('region', 'N/A')}")
-    
-    # 10. Stack Overflow
-    if "stackoverflow" in results:
-        so_data = results["stackoverflow"]
-        if isinstance(so_data, list) and so_data and "error" not in str(so_data[0]) and "message" not in str(so_data[0]):
-            context_parts.append(f"\n🔧 STACK OVERFLOW QUESTIONS:")
-            for i, q in enumerate(so_data[:4], 1):
-                if isinstance(q, dict) and q.get("title"):
-                    context_parts.append(f"{i}. Title: {q.get('title', 'N/A')}")
-                    context_parts.append(f"   Score: {q.get('score', 0)} | Answers: {q.get('answer_count', 0)}")
-    
-    # 11. Other sources (briefly)
-    other_sources = ["wikidata", "geocoding", "air_quality", "dictionary", "quotes", "github"]
-    for source in other_sources:
-        if source in results:
-            data = results[source]
-            if isinstance(data, (list, dict)) and "error" not in str(data):
-                context_parts.append(f"\n📌 {source.upper()} DATA AVAILABLE")
-    
-    context_parts.append("\n" + "=" * 80)
-    context_parts.append("INSTRUCTIONS FOR AI:")
-    context_parts.append("Analyze ALL the above search results comprehensively.")
-    context_parts.append("Provide a detailed, synthesized response that incorporates information from multiple sources.")
-    context_parts.append("Be specific and reference the sources where appropriate.")
-    context_parts.append("=" * 80)
-    
-    return "\n".join(context_parts)
-
-# Chat input
-if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"):
+# Main chat interface
+if prompt := st.chat_input("Search anything..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("user"):
@@ -1331,50 +1008,21 @@ if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"
         
         with st.spinner("Searching across 16 sources..."):
             search_results = search_all_sources(prompt)
-            st.session_state.last_search_results = search_results
         
-        formatted_results = format_results(prompt, search_results)
-        st.session_state.last_formatted_results = formatted_results
+        response = format_results(prompt, search_results)
+        st.markdown(response)
         
-        tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
-        
-        with tab1:
-            if model and st.session_state.model_loaded:
-                with st.spinner("🤖 AI is analyzing ALL search results..."):
-                    # Create comprehensive context with ALL search data
-                    full_context = create_comprehensive_context(prompt, search_results)
-                    
-                    # Prepare messages for AI
-                    ai_messages = [
-                        {"role": "system", "content": st.session_state.system_prompt},
-                        {"role": "user", "content": f"QUESTION: {prompt}\n\n{full_context}\n\nPlease provide a comprehensive analysis based on ALL the search results above."}
-                    ]
-                    
-                    # Generate AI response
-                    ai_response = generate_response(
-                        model,
-                        ai_messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                
-                st.markdown("### 🤖 AI Analysis")
-                st.markdown(ai_response)
-            else:
-                st.warning("AI model not loaded. Showing search results only.")
-                ai_response = formatted_results
-        
-        with tab2:
-            st.markdown(formatted_results)
-        
-        with tab3:
+        with st.expander("📊 View Raw Data"):
             for source, data in search_results.items():
-                with st.expander(f"📌 {source.replace('_', ' ').title()}"):
+                st.subheader(f"📌 {source.replace('_', ' ').title()}")
+                if isinstance(data, list):
+                    for i, item in enumerate(data[:3], 1):
+                        st.markdown(f"**Item {i}:**")
+                        st.json(item)
+                else:
                     st.json(data)
     
-    # Store final response
-    final_ai_response = ai_response if model else formatted_results
     st.session_state.messages.append({
         "role": "assistant", 
-        "content": final_ai_response
+        "content": response
     })
