@@ -1359,7 +1359,7 @@ Please provide a helpful, synthesized response based on the above information.""
         "role": "assistant", 
         "content": ai_response if model else formatted_results
     })
-, import streamlit as st
+import streamlit as st
 from arxiv_service import search_arxiv
 from duckduckgo_service import search_duckduckgo, get_instant_answer, search_news
 from wikipedia_service import search_wikipedia
