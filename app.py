@@ -9,261 +9,6 @@ from pathlib import Path
 from ctransformers import AutoModelForCausalLM
 import re
 
-# ==================== QUERY CLASSIFICATION ====================
-
-def classify_query(query: str) -> dict:
-    """
-    Classify if a query is:
-    1. Search-type (requires external data)
-    2. Conversational (can be answered by AI directly)
-    3. Mixed (both search and conversational)
-    
-    Returns: {"type": "search"/"chat"/"mixed", "search_query": str, "chat_query": str}
-    """
-    query_lower = query.lower().strip()
-    
-    # Keywords that indicate SEARCH is needed
-    search_keywords = [
-        # News/Current events
-        'news', 'latest', 'recent', 'today', 'yesterday', 'current',
-        'update', 'breaking', 'headlines',
-        
-        # Facts/Information
-        'weather', 'temperature', 'forecast', 'humidity', 'rain', 'sunny',
-        'air quality', 'pollution', 'aqi', 'pm2.5',
-        'location', 'where is', 'map', 'coordinates', 'geocode', 'latitude', 'longitude',
-        'country', 'capital', 'population', 'currency', 'gdp',
-        'define', 'definition', 'meaning of', 'what does mean', 'synonym',
-        'quote', 'quotes', 'famous sayings', 'proverb',
-        'book', 'books', 'author', 'publication', 'novel', 'publish',
-        'scientific', 'research', 'paper', 'study', 'arxiv', 'pubmed', 'journal',
-        'github', 'repository', 'repo', 'stackoverflow', 'stack exchange', 'code',
-        
-        # Specific entities
-        'wikipedia', 'wiki', 'encyclopedia',
-        
-        # How-to/Instructions (often need search)
-        'how to', 'how do i', 'how can i', 'tutorial', 'guide', 'steps to',
-        'best way to', 'method for', 'procedure',
-        
-        # Comparisons
-        'vs', 'versus', 'compared to', 'difference between', 'similarities',
-        
-        # Reviews/Recommendations
-        'best', 'worst', 'top', 'review', 'rating', 'recommend', 'compare',
-        
-        # Statistics/Data
-        'statistics', 'data', 'numbers', 'percentage', 'rate', 'figure',
-        
-        # Events
-        'when', 'where', 'who is', 'what is', 'which',
-        
-        # Prices/Stocks
-        'price', 'stock', 'market', 'crypto',
-    ]
-    
-    # Keywords that indicate CHAT/CONVERSATION (no search needed)
-    chat_keywords = [
-        # Greetings/Conversation
-        'hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
-        'how are you', "what's up", 'how is it going', 'how are things',
-        'thank you', 'thanks', 'you\'re welcome', 'sorry', 'please',
-        'bye', 'goodbye', 'see you', 'farewell',
-        
-        # AI identity/abilities
-        'who are you', 'what are you', 'your name', 'can you', 'do you',
-        'are you', 'will you', 'would you', 'could you', 'should you',
-        'who created you', 'who made you', 'what can you do',
-        
-        # Philosophical/Opinion
-        'think about', 'opinion on', 'believe', 'philosophy', 'thoughts',
-        'should i', 'do you think', 'what do you think', 'your thoughts',
-        'why do', 'why is', 'why are', 'why does',
-        
-        # Creative/Open-ended
-        'tell me a story', 'write a poem', 'create', 'imagine', 'make up',
-        'what if', 'suppose', 'hypothetical',
-        
-        # General knowledge (AI can answer without search)
-        'explain', 'what is', 'how does work', 'describe', 'summarize',
-        
-        # Personal
-        'i feel', 'i want', 'i need', 'i like', 'i hate', 'i think',
-        'my', 'mine', 'me', 'myself',
-        
-        # Hypotheticals
-        'if', 'could', 'would', 'might', 'maybe', 'perhaps',
-        
-        # Small talk
-        'how old', 'where do you live', 'do you have', 'are you alive',
-        'do you sleep', 'do you eat',
-        
-        # Jokes/Fun
-        'tell me a joke', 'make me laugh', 'funny',
-        
-        # Advice
-        'advice', 'suggest', 'help me',
-    ]
-    
-    # Check for search intent
-    is_search = False
-    search_query = query
-    for keyword in search_keywords:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', query_lower):
-            is_search = True
-            break
-    
-    # Special patterns that definitely need search
-    search_patterns = [
-        r'weather in .+', r'temperature in .+', r'forecast for .+',
-        r'news about .+', r'latest on .+', r'current .+ events',
-        r'books by .+', r'quote from .+', r'famous .+ quotes',
-        r'github repo .+', r'stackoverflow question .+', r'code for .+',
-        r'country info .+', r'capital of .+', r'population of .+',
-        r'define .+', r'meaning of .+', r'what is .+',
-        r'paper on .+', r'research about .+', r'study on .+',
-        r'how to .+', r'best way to .+', r'steps to .+',
-        r'difference between .+ and .+', r'.+ vs .+',
-    ]
-    
-    for pattern in search_patterns:
-        if re.search(pattern, query_lower):
-            is_search = True
-            break
-    
-    # Check for chat intent
-    is_chat = False
-    for keyword in chat_keywords:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', query_lower):
-            is_chat = True
-            break
-    
-    # Check for question words that might need search
-    question_words = ['what', 'how', 'when', 'where', 'why', 'who', 'which']
-    words = query_lower.split()
-    if words and words[0] in question_words:
-        starts_with_question = True
-    else:
-        starts_with_question = False
-    
-    # Check for conversational patterns (should override search)
-    conversational_patterns = [
-        r'^do you .+', r'^are you .+', r'^can you .+', r'^will you .+',
-        r'^would you .+', r'^could you .+', r'^should you .+',
-        r'^how are .+', r'^how do you .+', r'^how can you .+',
-        r'^tell me about yourself', r'^what can you .+',
-        r'^who are you', r'^what are you', r'^your name',
-        r'^hello', r'^hi', r'^hey', r'^good morning', r'^good afternoon',
-    ]
-    
-    for pattern in conversational_patterns:
-        if re.search(pattern, query_lower):
-            is_chat = True
-            is_search = False  # Override if it's clearly conversational
-            break
-    
-    # Special cases that should ALWAYS be search
-    always_search_patterns = [
-        r'.+ weather', r'.+ forecast', r'.+ temperature',
-        r'.+ humidity', r'.+ air quality', r'.+ pollution',
-        r'news', r'latest', r'current', r'breaking',
-        r'stock', r'price', r'market',
-    ]
-    
-    for pattern in always_search_patterns:
-        if re.search(pattern, query_lower) and len(query_lower) > 5:
-            is_search = True
-            is_chat = False
-            break
-    
-    # Special cases that should ALWAYS be chat
-    always_chat_patterns = [
-        r'^(hi|hello|hey|good morning|good afternoon|good evening)\b',
-        r'^how are you', r'^what\'?s up', r'^how is it going',
-        r'^thank you', r'^thanks', r'^please',
-        r'^who are you', r'^what are you', r'^your name',
-        r'^tell me about yourself',
-        r'^do you have', r'^can you', r'^will you',
-        r'^tell me a joke', r'^make me laugh',
-    ]
-    
-    for pattern in always_chat_patterns:
-        if re.search(pattern, query_lower):
-            is_chat = True
-            is_search = False
-            break
-    
-    # Decision logic
-    if is_search and is_chat:
-        # Mixed query - extract search terms
-        # Try to remove conversational parts
-        search_terms = []
-        chat_terms = []
-        
-        # Split query into words
-        words = query.split()
-        
-        for word in words:
-            word_lower = word.lower()
-            # Check if word is conversational
-            is_conversational = False
-            for chat_word in chat_keywords:
-                if chat_word in word_lower or word_lower in ['you', 'your', 'yours', 'me', 'my', 'mine', 'i', 'am']:
-                    is_conversational = True
-                    chat_terms.append(word)
-                    break
-            
-            if not is_conversational:
-                search_terms.append(word)
-        
-        if search_terms:
-            search_query = ' '.join(search_terms)
-            return {
-                "type": "mixed",
-                "search_query": search_query,
-                "chat_query": query,
-                "confidence": 0.7
-            }
-        else:
-            return {
-                "type": "chat",
-                "search_query": "",
-                "chat_query": query,
-                "confidence": 0.9
-            }
-    
-    elif is_search:
-        return {
-            "type": "search",
-            "search_query": query,
-            "chat_query": "",
-            "confidence": 0.8
-        }
-    
-    elif is_chat:
-        return {
-            "type": "chat",
-            "search_query": "",
-            "chat_query": query,
-            "confidence": 0.9
-        }
-    
-    # Default: if it's a short question, assume chat; otherwise search
-    elif starts_with_question and len(query.split()) <= 8:
-        return {
-            "type": "chat",
-            "search_query": "",
-            "chat_query": query,
-            "confidence": 0.6
-        }
-    else:
-        return {
-            "type": "search",
-            "search_query": query,
-            "chat_query": "",
-            "confidence": 0.5
-        }
-
 # ==================== SERVICE FUNCTIONS ====================
 
 # ArXiv Service
@@ -1129,7 +874,103 @@ def generate_response(model, messages, system_prompt="", max_tokens=256, tempera
     
     return response.strip()
 
-# ==================== HELPER FUNCTIONS ====================
+# ==================== MODE DETECTION ====================
+
+def detect_mode(query: str) -> str:
+    """
+    Detect whether the query should trigger a search or just go to AI chat.
+    Returns: "search", "chat", or "deep_think"
+    """
+    query_lower = query.lower().strip()
+    
+    # Search triggers - queries that should trigger web search
+    search_keywords = [
+        "what is", "who is", "where is", "when is", "why is", "how to",
+        "current", "latest", "news about", "weather in", "temperature in",
+        "air quality in", "location of", "find", "search for", "look up",
+        "define", "meaning of", "translate", "map of", "country",
+        "research", "paper", "article", "study", "results", "information",
+        "data", "statistics", "facts about", "population of", "capital of",
+        "latest news", "current events", "breaking news", "headlines",
+        "stock price", "market", "currency", "exchange rate", "price of",
+        "history of", "timeline", "events", "historical", "biography",
+        "recipe for", "how to cook", "how to make", "ingredients for",
+        "distance between", "travel time", "route from", "directions to",
+        "flights to", "hotels in", "restaurants near", "things to do in",
+        "movies about", "books by", "author of", "director of", "cast of",
+        "symptoms of", "treatment for", "cure for", "medicine for", "disease",
+        "company profile", "business", "ceo of", "founder of", "products of",
+        "scientific", "research on", "experiment", "study on", "paper about"
+    ]
+    
+    # Chat triggers - conversational phrases that should go directly to AI
+    chat_keywords = [
+        "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+        "how are you", "thank you", "thanks", "please", "could you", "can you",
+        "would you", "tell me about", "explain", "describe", "discuss",
+        "what do you think", "your opinion", "do you know", "do you think",
+        "i want to", "i need help with", "help me", "assist me",
+        "let's talk", "chat about", "converse", "conversation",
+        "how do i", "what should i", "what would you", "what can you",
+        "can we talk", "let's discuss", "i'd like to", "i'm wondering",
+        "i'm curious", "i'm interested in", "what's your", "how's it going",
+        "nice to meet you", "good to see you", "long time no see",
+        "how have you been", "what's up", "what's new", "how's your day",
+        "how's everything", "how's life", "how are things", "how do you do"
+    ]
+    
+    # Deep think triggers - philosophical/analytical questions
+    deep_think_keywords = [
+        "what is the meaning", "philosophy of", "why do we", "purpose of",
+        "ethical", "moral dilemma", "should i", "what if", "imagine if",
+        "theoretical", "hypothetical", "thought experiment", "deep question",
+        "profound", "existential", "life and death", "universe", "cosmos",
+        "consciousness", "mind", "soul", "spirituality", "religion",
+        "love is", "happiness is", "success means", "beauty is",
+        "truth is", "justice is", "freedom is", "equality is",
+        "analyze this", "critically examine", "evaluate", "assess",
+        "compare and contrast", "discuss the implications", "what are the consequences",
+        "future of", "prediction", "forecast", "speculate", "theorize"
+    ]
+    
+    # Check if query matches deep think keywords
+    for keyword in deep_think_keywords:
+        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
+            return "deep_think"
+    
+    # Check if query starts with search keywords
+    for keyword in search_keywords:
+        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
+            return "search"
+    
+    # Check if query starts with chat keywords
+    for keyword in chat_keywords:
+        if query_lower.startswith(keyword) or f" {keyword} " in f" {query_lower} ":
+            return "chat"
+    
+    # Check query length and structure
+    words = query_lower.split()
+    
+    # Very short queries likely need search
+    if len(words) <= 2:
+        return "search"
+    
+    # Questions (starting with question words)
+    question_words = ["what", "who", "where", "when", "why", "how", "which"]
+    if any(query_lower.startswith(word) for word in question_words):
+        return "search"
+    
+    # If contains "?" but not conversational
+    if "?" in query:
+        # Check if it's a conversational question
+        conversational_patterns = ["how are you", "do you", "can you", "would you", "could you"]
+        if not any(pattern in query_lower for pattern in conversational_patterns):
+            return "search"
+    
+    # Default to chat for longer, conversational queries
+    return "chat"
+
+# ==================== SEARCH FUNCTIONS ====================
 
 def search_all_sources(query: str) -> dict:
     """Search ALL sources simultaneously."""
@@ -1431,7 +1272,7 @@ st.set_page_config(
 )
 
 st.title("🔍🤖 AI-Powered Multi-Source Search")
-st.markdown("*Intelligent query classification + 16 sources + AI analysis*")
+st.markdown("*Search 16 sources simultaneously, then get AI-powered analysis*")
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -1451,9 +1292,6 @@ if "last_search_results" not in st.session_state:
 
 if "last_formatted_results" not in st.session_state:
     st.session_state.last_formatted_results = None
-
-if "last_classification" not in st.session_state:
-    st.session_state.last_classification = None
 
 # Sidebar
 with st.sidebar:
@@ -1486,6 +1324,31 @@ with st.sidebar:
         - wttr.in (Weather)
         - OpenAQ (Air Quality)
         """)
+    
+    st.divider()
+    st.header("🎯 Input Mode")
+    
+    # Mode selection
+    mode = st.radio(
+        "Select how to handle queries:",
+        options=["Auto-detect", "Search Mode", "Chat Mode", "Deep Think"],
+        index=0,
+        help="""
+        • Auto-detect: Let AI decide based on query
+        • Search Mode: Always search all sources first
+        • Chat Mode: Direct conversation with AI
+        • Deep Think: AI analysis without search
+        """
+    )
+    
+    if mode == "Auto-detect":
+        st.info("AI will decide: Natural conversation → Chat, Information-seeking → Search")
+    elif mode == "Search Mode":
+        st.info("Always searches 16 sources for factual information")
+    elif mode == "Chat Mode":
+        st.info("Direct conversation with AI (no search)")
+    else:  # Deep Think
+        st.info("AI analyzes and reasons without external search")
     
     st.divider()
     st.header("🤖 AI Persona")
@@ -1523,32 +1386,6 @@ with st.sidebar:
                           help="Maximum length of the response")
     
     st.divider()
-    st.header("🔍 Query Classifier")
-    
-    # Show last classification if available
-    if st.session_state.last_classification:
-        type_colors = {
-            "search": "🔍",
-            "chat": "💭",
-            "mixed": "🔍💭"
-        }
-        
-        st.metric(
-            label="Last Query Type",
-            value=f"{type_colors.get(st.session_state.last_classification['type'], '❓')} {st.session_state.last_classification['type'].upper()}"
-        )
-        
-        with st.expander("Classification Details", expanded=False):
-            st.write(f"**Type:** {st.session_state.last_classification['type']}")
-            st.write(f"**Confidence:** {st.session_state.last_classification['confidence']:.2f}")
-            
-            if st.session_state.last_classification["search_query"]:
-                st.write(f"**Search Query:** {st.session_state.last_classification['search_query']}")
-            
-            if st.session_state.last_classification["chat_query"]:
-                st.write(f"**Chat Query:** {st.session_state.last_classification['chat_query']}")
-    
-    st.divider()
     
     col1, col2 = st.columns(2)
     with col1:
@@ -1556,13 +1393,11 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.last_search_results = None
             st.session_state.last_formatted_results = None
-            st.session_state.last_classification = None
             st.rerun()
     with col2:
         if st.button("🔄 Reset", type="secondary", use_container_width=True):
             st.session_state.system_prompt = PRESET_PROMPTS["Search Analyst"]
             st.session_state.selected_preset = "Search Analyst"
-            st.session_state.last_classification = None
             st.rerun()
     
     st.divider()
@@ -1582,72 +1417,78 @@ with st.spinner("Loading TinyLLaMA model... This may take a moment on first run.
 if st.session_state.model_loaded:
     st.success("✅ Model loaded and ready!", icon="✅")
 
-# Display chat history
+# Display chat history with mode icons
 for message in st.session_state.messages:
+    # Check if message has mode metadata
+    mode_icon = "💬"  # Default chat icon
+    
+    if "metadata" in message:
+        if message["metadata"] == "search":
+            mode_icon = "🔍"
+        elif message["metadata"] == "deep_think":
+            mode_icon = "🤔"
+    
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        # Display mode icon if it's a user message
+        if message["role"] == "user":
+            col1, col2 = st.columns([0.9, 0.1])
+            with col1:
+                st.markdown(message["content"])
+            with col2:
+                st.markdown(f"**{mode_icon}**")
+        else:
+            st.markdown(message["content"])
 
-# Chat input
-if prompt := st.chat_input("Ask anything... (Intelligent query classification + 16 sources)"):
-    # Classify the query
-    classification = classify_query(prompt)
-    st.session_state.last_classification = classification
+# Main chat input with mode hint
+if prompt := st.chat_input("Ask anything... (Type normally, AI will detect if search is needed)"):
+    # Determine mode based on sidebar selection
+    if mode == "Auto-detect":
+        detected_mode = detect_mode(prompt)
+        mode_display = "🔍 Search" if detected_mode == "search" else "💬 Chat" if detected_mode == "chat" else "🤔 Deep Think"
+    elif mode == "Search Mode":
+        detected_mode = "search"
+        mode_display = "🔍 Search"
+    elif mode == "Chat Mode":
+        detected_mode = "chat"
+        mode_display = "💬 Chat"
+    else:  # Deep Think
+        detected_mode = "deep_think"
+        mode_display = "🤔 Deep Think"
     
-    # Add user message to chat
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Store the query with its mode
+    st.session_state.messages.append({
+        "role": "user", 
+        "content": prompt,
+        "metadata": detected_mode
+    })
     
+    # Display user message with mode icon
     with st.chat_message("user"):
-        st.markdown(prompt)
+        col1, col2 = st.columns([0.9, 0.1])
+        with col1:
+            st.markdown(prompt)
+        with col2:
+            mode_icon = "🔍" if detected_mode == "search" else "💬" if detected_mode == "chat" else "🤔"
+            st.markdown(f"**{mode_icon}**")
     
+    # Process based on mode
     with st.chat_message("assistant"):
-        # Show query type indicator
-        type_emoji = {
-            "search": "🔍",
-            "chat": "💭", 
-            "mixed": "🔍💭"
-        }.get(classification["type"], "❓")
-        
-        st.caption(f"{type_emoji} Query classified as: {classification['type'].upper()}")
-        
-        if classification["type"] == "chat":
-            # Direct AI response without search
-            st.caption("💭 Generating response...")
-            
-            if model and st.session_state.model_loaded:
-                with st.spinner("Thinking..."):
-                    ai_response = generate_response(
-                        model,
-                        st.session_state.messages,
-                        system_prompt=st.session_state.system_prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                
-                st.markdown(ai_response)
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-            else:
-                st.warning("AI model not loaded. Please wait for model to load.")
-        
-        elif classification["type"] == "search":
-            # Search-only response
+        if detected_mode == "search":
+            # Perform search
             st.caption("🔎 Searching all 16 sources simultaneously...")
             
             with st.spinner("Searching across 16 sources..."):
-                search_results = search_all_sources(classification["search_query"])
+                search_results = search_all_sources(prompt)
                 st.session_state.last_search_results = search_results
             
-            formatted_results = format_results(classification["search_query"], search_results)
+            formatted_results = format_results(prompt, search_results)
             st.session_state.last_formatted_results = formatted_results
             
-            tab1, tab2, tab3 = st.tabs(["📊 Search Results", "🤖 AI Analysis", "📈 Raw Data"])
+            tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
             
             with tab1:
-                st.markdown("### 📊 Search Results")
-                st.markdown(formatted_results)
-            
-            with tab2:
                 if model and st.session_state.model_loaded:
-                    with st.spinner("AI is analyzing the results..."):
+                    with st.spinner("AI is analyzing the search results..."):
                         search_summary = summarize_results_for_ai(search_results)
                         
                         enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
@@ -1667,75 +1508,114 @@ Please provide a helpful, synthesized response based on the above information.""
                             max_tokens=max_tokens,
                             temperature=temperature
                         )
-                    st.markdown("### 🤖 AI Analysis")
+                    st.markdown("### 🤖 AI Analysis of Search Results")
                     st.markdown(ai_response)
+                    final_response = ai_response
                 else:
                     st.warning("AI model not loaded. Showing search results only.")
+                    st.markdown("### 📊 Search Results")
+                    st.markdown(formatted_results)
+                    final_response = formatted_results
+            
+            with tab2:
+                st.markdown("### 📊 Search Results")
+                st.markdown(formatted_results)
             
             with tab3:
+                st.markdown("### 📈 Raw Data from All Sources")
                 for source, data in search_results.items():
                     with st.expander(f"📌 {source.replace('_', ' ').title()}"):
                         st.json(data)
             
-            # Store the main response
-            main_response = formatted_results
-            st.session_state.messages.append({"role": "assistant", "content": main_response})
-        
-        elif classification["type"] == "mixed":
-            # Both search and AI response
-            st.caption("🔎 Searching + 💭 Thinking...")
-            
-            # First do the search
-            with st.spinner("Searching across 16 sources..."):
-                search_results = search_all_sources(classification["search_query"])
-                st.session_state.last_search_results = search_results
-            
-            formatted_results = format_results(classification["search_query"], search_results)
-            st.session_state.last_formatted_results = formatted_results
-            
-            # Then generate AI response
+        elif detected_mode == "deep_think":
+            # Deep think mode - AI analysis without search
             if model and st.session_state.model_loaded:
-                with st.spinner("AI is analyzing and responding..."):
-                    # Combine search results with conversational context
-                    search_summary = summarize_results_for_ai(search_results)
-                    
-                    enhanced_prompt = f"""The user asked: "{prompt}"
+                with st.spinner("🤔 AI is thinking deeply about this..."):
+                    # Use a different prompt for deep thinking
+                    deep_think_prompt = f"""The user has asked: "{prompt}"
 
-I found this information:
-{search_summary}
+Please provide a thoughtful, in-depth analysis or answer. Consider multiple perspectives, 
+provide detailed reasoning, and show your thought process. Don't search for external 
+information - rely on your knowledge and reasoning abilities."""
 
-Please provide a helpful response that:
-1. Answers the conversational aspect of their query
-2. Incorporates relevant information from the search results
-3. Maintains a natural, conversational tone"""
-                    
                     temp_messages = st.session_state.messages.copy()
-                    temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
+                    temp_messages[-1] = {"role": "user", "content": deep_think_prompt}
                     
                     ai_response = generate_response(
                         model,
                         temp_messages,
                         system_prompt=st.session_state.system_prompt,
+                        max_tokens=max_tokens * 2,  # Allow longer responses for deep thinking
+                        temperature=temperature
+                    )
+                st.markdown("### 🤔 Deep Think Analysis")
+                st.markdown(ai_response)
+                final_response = ai_response
+            else:
+                st.error("AI model not available for deep thinking.")
+                final_response = "I need the AI model to perform deep thinking analysis."
+        
+        else:  # Chat mode
+            # Direct AI conversation without search
+            if model and st.session_state.model_loaded:
+                with st.spinner("💬 Thinking..."):
+                    # Regular chat without search enhancement
+                    ai_response = generate_response(
+                        model,
+                        st.session_state.messages,
+                        system_prompt=st.session_state.system_prompt,
                         max_tokens=max_tokens,
                         temperature=temperature
                     )
-                
-                tab1, tab2, tab3 = st.tabs(["🤖 AI Response", "📊 Search Results", "📈 Raw Data"])
-                
-                with tab1:
-                    st.markdown(ai_response)
-                
-                with tab2:
-                    st.markdown("### 📊 Search Results")
-                    st.markdown(formatted_results)
-                
-                with tab3:
-                    for source, data in search_results.items():
-                        with st.expander(f"📌 {source.replace('_', ' ').title()}"):
-                            st.json(data)
-                
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                st.markdown(ai_response)
+                final_response = ai_response
             else:
-                # Just show search results if no model
-                st.markdown(formatted_results)
-                st.session_state.messages.append({"role": "assistant", "content": formatted_results})
+                st.error("AI model not available for chat.")
+                final_response = "I need the AI model to chat with you."
+    
+    # Store the assistant's response
+    st.session_state.messages.append({
+        "role": "assistant", 
+        "content": final_response
+    })
+
+# Add quick action buttons
+st.divider()
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("🔍 Quick Search Example", use_container_width=True):
+        st.session_state.messages.append({
+            "role": "user",
+            "content": "What is quantum computing?",
+            "metadata": "search"
+        })
+        st.rerun()
+
+with col2:
+    if st.button("💬 Chat Example", use_container_width=True):
+        st.session_state.messages.append({
+            "role": "user",
+            "content": "How are you doing today?",
+            "metadata": "chat"
+        })
+        st.rerun()
+
+with col3:
+    if st.button("🤔 Deep Think Example", use_container_width=True):
+        st.session_state.messages.append({
+            "role": "user",
+            "content": "What is the meaning of life from a philosophical perspective?",
+            "metadata": "deep_think"
+        })
+        st.rerun()
+
+# Footer with mode explanation
+st.divider()
+st.caption("""
+**Mode Guide:**
+- **🔍 Search Mode**: Searches 16 sources for factual information. Best for "what", "who", "where", "when", "why" questions.
+- **💬 Chat Mode**: Direct conversation with AI. Best for greetings, opinions, explanations, and discussions.
+- **🤔 Deep Think**: AI analysis without external search. Best for philosophical questions, reasoning, and creative thinking.
+- **Auto-detect**: AI automatically chooses the best mode based on your query.
+""")
