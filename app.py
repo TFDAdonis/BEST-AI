@@ -11,10 +11,8 @@ from ctransformers import AutoModelForCausalLM
 # ==================== SERVICE FUNCTIONS ====================
 
 # ArXiv Service
-def search_arxiv(query: str, max_results: int = 3):
-    """
-    Search arXiv for scientific papers.
-    """
+def search_arxiv(query: str, max_results: int = 5):
+    """Search arXiv for scientific papers."""
     try:
         client = arxiv.Client()
         search = arxiv.Search(
@@ -42,10 +40,8 @@ def search_arxiv(query: str, max_results: int = 3):
         return [{"error": str(e)}]
 
 # DuckDuckGo Services
-def search_duckduckgo(query: str, max_results: int = 5):
-    """
-    Search DuckDuckGo web results.
-    """
+def search_duckduckgo(query: str, max_results: int = 8):
+    """Search DuckDuckGo web results."""
     try:
         url = "https://api.duckduckgo.com/"
         params = {
@@ -55,7 +51,7 @@ def search_duckduckgo(query: str, max_results: int = 5):
             "skip_disambig": "1"
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         results = []
@@ -79,7 +75,6 @@ def search_duckduckgo(query: str, max_results: int = 5):
                     "type": "related_topic"
                 })
             elif isinstance(topic, str):
-                # Handle string format topics
                 if " - " in topic:
                     title, body = topic.split(" - ", 1)
                     results.append({
@@ -92,14 +87,12 @@ def search_duckduckgo(query: str, max_results: int = 5):
             if len(results) >= max_results:
                 break
         
-        return results
+        return results[:max_results]
     except Exception as e:
         return [{"error": str(e)}]
 
 def get_instant_answer(query: str):
-    """
-    Get instant answer from DuckDuckGo.
-    """
+    """Get instant answer from DuckDuckGo."""
     try:
         url = "https://api.duckduckgo.com/"
         params = {
@@ -108,7 +101,7 @@ def get_instant_answer(query: str):
             "no_html": "1"
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         return {
@@ -120,12 +113,9 @@ def get_instant_answer(query: str):
     except Exception as e:
         return {"error": str(e)}
 
-def search_news(query: str, max_results: int = 3):
-    """
-    Search news using DuckDuckGo.
-    """
+def search_news(query: str, max_results: int = 5):
+    """Search news using DuckDuckGo."""
     try:
-        # Using DuckDuckGo's news search
         url = "https://duckduckgo.com/html/"
         params = {
             "q": f"{query} news",
@@ -136,14 +126,11 @@ def search_news(query: str, max_results: int = 3):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         
-        # Simple parsing (for demo purposes)
         import re
-        
         results = []
         
-        # Extract links and titles (simplified)
         titles = re.findall(r'<a[^>]*class="result__url"[^>]*>([^<]+)</a>', response.text)
         snippets = re.findall(r'<a[^>]*class="result__snippet"[^>]*>([^<]+)</a>', response.text)
         
@@ -156,7 +143,6 @@ def search_news(query: str, max_results: int = 3):
             })
         
         if not results:
-            # Fallback to regular search
             results = search_duckduckgo(f"{query} news", max_results)
         
         return results
@@ -165,20 +151,14 @@ def search_news(query: str, max_results: int = 3):
 
 # Wikipedia Service
 def search_wikipedia(query: str):
-    """
-    Search Wikipedia for information.
-    """
+    """Search Wikipedia for information."""
     try:
-        # Set language (optional)
         wikipedia.set_lang("en")
-        
-        # Search for pages
-        search_results = wikipedia.search(query, results=3)
+        search_results = wikipedia.search(query, results=5)
         
         if not search_results:
             return {"exists": False, "message": "No Wikipedia page found"}
         
-        # Get the first result
         try:
             page = wikipedia.page(search_results[0])
             return {
@@ -186,11 +166,10 @@ def search_wikipedia(query: str):
                 "title": page.title,
                 "summary": page.summary,
                 "url": page.url,
-                "categories": page.categories[:5],
-                "content": page.content[:1000]  # First 1000 chars
+                "categories": page.categories[:10],
+                "content": page.content[:2000]
             }
         except wikipedia.exceptions.DisambiguationError as e:
-            # Handle disambiguation pages
             return {
                 "exists": True,
                 "title": query,
@@ -206,16 +185,14 @@ def search_wikipedia(query: str):
 
 # Weather Service
 def get_weather_wttr(location: str):
-    """
-    Get weather information using wttr.in.
-    """
+    """Get weather information using wttr.in."""
     try:
         url = f"https://wttr.in/{location}?format=j1"
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; WeatherApp/1.0)"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
         
         current = data.get("current_condition", [{}])[0]
@@ -239,11 +216,8 @@ def get_weather_wttr(location: str):
 
 # Air Quality Service
 def get_air_quality(location: str):
-    """
-    Get air quality data from OpenAQ.
-    """
+    """Get air quality data from OpenAQ."""
     try:
-        # First, try to get coordinates if it's a city name
         url = f"https://api.openaq.org/v2/latest"
         params = {
             "limit": 5,
@@ -258,16 +232,12 @@ def get_air_quality(location: str):
         if location:
             params["city"] = location
         
-        headers = {
-            "X-API-Key": ""  # OpenAQ doesn't require an API key for basic usage
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         if data.get("results"):
             results = []
-            for result in data["results"][:3]:  # Limit to 3 locations
+            for result in data["results"][:3]:
                 location_data = {
                     "location": result.get("location", "N/A"),
                     "city": result.get("city", "N/A"),
@@ -297,10 +267,8 @@ def get_air_quality(location: str):
         return {"error": str(e)}
 
 # Wikidata Service
-def search_wikidata(query: str, max_results: int = 3):
-    """
-    Search Wikidata for entities.
-    """
+def search_wikidata(query: str, max_results: int = 5):
+    """Search Wikidata for entities."""
     try:
         url = "https://www.wikidata.org/w/api.php"
         params = {
@@ -311,7 +279,7 @@ def search_wikidata(query: str, max_results: int = 3):
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         results = []
@@ -330,10 +298,8 @@ def search_wikidata(query: str, max_results: int = 3):
         return [{"error": str(e)}]
 
 # OpenLibrary Service
-def search_books(query: str, max_results: int = 5):
-    """
-    Search for books using OpenLibrary API.
-    """
+def search_books(query: str, max_results: int = 6):
+    """Search for books using OpenLibrary API."""
     try:
         url = "https://openlibrary.org/search.json"
         params = {
@@ -341,7 +307,7 @@ def search_books(query: str, max_results: int = 5):
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         results = []
@@ -352,7 +318,7 @@ def search_books(query: str, max_results: int = 5):
                 "first_publish_year": doc.get("first_publish_year", "N/A"),
                 "publisher": doc.get("publisher", ["Unknown"])[0] if doc.get("publisher") else "Unknown",
                 "language": doc.get("language", ["en"])[0] if doc.get("language") else "en",
-                "subject": doc.get("subject", [])[:3],
+                "subject": doc.get("subject", [])[:5],
                 "url": f"https://openlibrary.org{doc.get('key', '')}" if doc.get("key") else "",
                 "cover_id": doc.get("cover_i"),
                 "cover_url": f"https://covers.openlibrary.org/b/id/{doc.get('cover_i')}-M.jpg" if doc.get("cover_i") else None
@@ -364,15 +330,11 @@ def search_books(query: str, max_results: int = 5):
         return [{"error": str(e)}]
 
 # PubMed Service
-def search_pubmed(query: str, max_results: int = 3):
-    """
-    Search PubMed for medical research articles.
-    """
+def search_pubmed(query: str, max_results: int = 5):
+    """Search PubMed for medical research articles."""
     try:
-        # Search for article IDs
         base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
         
-        # Step 1: Search for IDs
         search_url = f"{base_url}/esearch.fcgi"
         search_params = {
             "db": "pubmed",
@@ -382,7 +344,7 @@ def search_pubmed(query: str, max_results: int = 3):
             "sort": "relevance"
         }
         
-        search_response = requests.get(search_url, params=search_params, timeout=10)
+        search_response = requests.get(search_url, params=search_params, timeout=15)
         search_data = search_response.json()
         
         ids = search_data.get("esearchresult", {}).get("idlist", [])
@@ -390,7 +352,6 @@ def search_pubmed(query: str, max_results: int = 3):
         if not ids:
             return [{"message": "No articles found"}]
         
-        # Step 2: Fetch article details
         fetch_url = f"{base_url}/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
@@ -399,24 +360,19 @@ def search_pubmed(query: str, max_results: int = 3):
             "rettype": "abstract"
         }
         
-        fetch_response = requests.get(fetch_url, params=fetch_params, timeout=10)
-        
-        # Parse XML
+        fetch_response = requests.get(fetch_url, params=fetch_params, timeout=15)
         root = ET.fromstring(fetch_response.content)
         
         results = []
         for article in root.findall(".//PubmedArticle"):
-            # Extract article details
             article_elem = article.find(".//Article")
             
             title_elem = article_elem.find(".//ArticleTitle")
             title = title_elem.text if title_elem is not None else "N/A"
             
-            # Extract abstract
             abstract_elem = article_elem.find(".//Abstract/AbstractText")
             abstract = abstract_elem.text if abstract_elem is not None else "No abstract available"
             
-            # Extract authors
             authors = []
             for author_elem in article_elem.findall(".//Author"):
                 last_name_elem = author_elem.find("LastName")
@@ -427,7 +383,6 @@ def search_pubmed(query: str, max_results: int = 3):
                 elif last_name_elem is not None:
                     authors.append(last_name_elem.text)
             
-            # Extract publication year
             pub_date_elem = article_elem.find(".//PubMedPubDate[@PubStatus='pubmed']")
             year = "N/A"
             if pub_date_elem is not None:
@@ -435,14 +390,13 @@ def search_pubmed(query: str, max_results: int = 3):
                 if year_elem is not None:
                     year = year_elem.text
             
-            # Get PubMed ID
             pmid_elem = article.find(".//PMID")
             pmid = pmid_elem.text if pmid_elem is not None else ""
             
             result = {
                 "title": title,
-                "abstract": abstract[:500] + "..." if len(abstract) > 500 else abstract,
-                "authors": authors[:5],  # Limit to 5 authors
+                "abstract": abstract[:1000] + "..." if len(abstract) > 1000 else abstract,
+                "authors": authors[:8],
                 "year": year,
                 "pmid": pmid,
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
@@ -453,11 +407,9 @@ def search_pubmed(query: str, max_results: int = 3):
     except Exception as e:
         return [{"error": str(e)}]
 
-# Nominatim Service (Geocoding)
+# Nominatim Service
 def geocode_location(location: str):
-    """
-    Geocode a location using Nominatim (OpenStreetMap).
-    """
+    """Geocode a location using Nominatim."""
     try:
         url = "https://nominatim.openstreetmap.org/search"
         params = {
@@ -471,7 +423,7 @@ def geocode_location(location: str):
             "User-Agent": "AI-Search-Assistant/1.0"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         data = response.json()
         
         if data and len(data) > 0:
@@ -495,13 +447,10 @@ def geocode_location(location: str):
 
 # Dictionary Service
 def get_definition(word: str):
-    """
-    Get dictionary definition using Free Dictionary API.
-    """
+    """Get dictionary definition using Free Dictionary API."""
     try:
         url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-        
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         
         if response.status_code == 404:
             return {"error": f"Word '{word}' not found in dictionary"}
@@ -511,14 +460,12 @@ def get_definition(word: str):
         if isinstance(data, list) and len(data) > 0:
             word_data = data[0]
             
-            # Extract phonetic pronunciations
             phonetics = []
             if "phonetics" in word_data:
                 for phonetic in word_data["phonetics"]:
                     if phonetic.get("text"):
                         phonetics.append(phonetic["text"])
             
-            # Extract meanings
             meanings = []
             if "meanings" in word_data:
                 for meaning in word_data["meanings"]:
@@ -550,19 +497,15 @@ def get_definition(word: str):
 
 # Countries Service
 def search_country(query: str):
-    """
-    Search for country information using REST Countries API.
-    """
+    """Search for country information using REST Countries API."""
     try:
-        # Try exact name first
         url = f"https://restcountries.com/v3.1/name/{query}"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         
         if response.status_code == 404:
-            # Try as partial search
             url = f"https://restcountries.com/v3.1/name/{query}"
             params = {"fullText": False}
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=15)
         
         if response.status_code != 200:
             return {"error": f"Country '{query}' not found"}
@@ -572,18 +515,15 @@ def search_country(query: str):
         if data and len(data) > 0:
             country = data[0]
             
-            # Extract languages
             languages = []
             if "languages" in country:
                 languages = list(country["languages"].values())
             
-            # Extract currencies
             currencies = []
             if "currencies" in country:
                 for curr_code, curr_info in country["currencies"].items():
                     currencies.append(f"{curr_info.get('name', '')} ({curr_code})")
             
-            # Extract capital
             capital = country.get("capital", ["N/A"])[0] if country.get("capital") else "N/A"
             
             return {
@@ -608,19 +548,16 @@ def search_country(query: str):
         return {"error": str(e)}
 
 # Quotes Service
-def search_quotes(query: str, max_results: int = 3):
-    """
-    Search for quotes using Quotable API.
-    """
+def search_quotes(query: str, max_results: int = 5):
+    """Search for quotes using Quotable API."""
     try:
-        # Search quotes by author, content, or tags
         url = "https://api.quotable.io/search/quotes"
         params = {
             "query": query,
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         results = []
@@ -635,12 +572,10 @@ def search_quotes(query: str, max_results: int = 3):
             }
             results.append(result)
         
-        # If no search results, get random quotes
         if not results:
             url = "https://api.quotable.io/quotes/random"
             params = {"limit": max_results}
-            
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=15)
             random_quotes = response.json()
             
             for quote in random_quotes[:max_results]:
@@ -657,10 +592,8 @@ def search_quotes(query: str, max_results: int = 3):
         return [{"error": str(e)}]
 
 # GitHub Service
-def search_github_repos(query: str, max_results: int = 3):
-    """
-    Search GitHub repositories.
-    """
+def search_github_repos(query: str, max_results: int = 5):
+    """Search GitHub repositories."""
     try:
         url = "https://api.github.com/search/repositories"
         params = {
@@ -674,9 +607,8 @@ def search_github_repos(query: str, max_results: int = 3):
             "Accept": "application/vnd.github.v3+json"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         
-        # GitHub API has rate limits, so we need to handle that
         if response.status_code == 403:
             return [{"error": "GitHub API rate limit exceeded. Try again later."}]
         
@@ -704,10 +636,8 @@ def search_github_repos(query: str, max_results: int = 3):
         return [{"error": str(e)}]
 
 # StackExchange Service
-def search_stackoverflow(query: str, max_results: int = 3):
-    """
-    Search Stack Overflow questions.
-    """
+def search_stackoverflow(query: str, max_results: int = 6):
+    """Search Stack Overflow questions."""
     try:
         url = "https://api.stackexchange.com/2.3/search"
         params = {
@@ -718,7 +648,7 @@ def search_stackoverflow(query: str, max_results: int = 3):
             "pagesize": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         results = []
@@ -751,10 +681,12 @@ MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resol
 PRESET_PROMPTS = {
     "Search Analyst": """You are an intelligent search analyst. Your role is to:
 - Analyze search results from multiple sources and provide clear, synthesized insights
-- Identify the most relevant and accurate information from the data provided
+- Identify the most relevant and accurate information from ALL search results provided
 - Present findings in a well-organized, easy-to-understand format
 - Highlight key facts, trends, and connections between different sources
-- Be objective and cite which sources your information comes from""",
+- Be objective and cite which sources your information comes from
+- Use ALL available information from the search results
+- DO NOT summarize or truncate the search results - provide full analysis based on them""",
     "Khisba GIS": """You are Khisba GIS, an enthusiastic remote sensing and GIS expert. Your personality:
 - Name: Khisba GIS
 - Role: Remote sensing and GIS expert
@@ -769,13 +701,14 @@ Guidelines:
 - Share practical examples and real-world applications
 - Show genuine interest in the user's remote sensing challenges
 - If topics go outside remote sensing, gently guide back to GIS
-- Always introduce yourself as Khisba GIS when asked who you are""",
-    "Default Assistant": "You are a helpful, friendly AI assistant. Provide clear and concise answers based on the search results provided.",
-    "Professional Expert": "You are a professional expert. Provide detailed, accurate, and well-structured responses. Use formal language and cite reasoning when appropriate.",
-    "Creative Writer": "You are a creative writer with a vivid imagination. Use descriptive language, metaphors, and engaging storytelling in your responses.",
-    "Code Helper": "You are a programming expert. Provide clean, well-commented code examples. Explain technical concepts clearly and suggest best practices.",
-    "Friendly Tutor": "You are a patient and encouraging tutor. Explain concepts step by step, use simple examples, and ask questions to ensure understanding.",
-    "Concise Responder": "You are brief and to the point. Give short, direct answers without unnecessary elaboration.",
+- Always introduce yourself as Khisba GIS when asked who you are
+- Use ALL available search results for comprehensive answers""",
+    "Default Assistant": "You are a helpful, friendly AI assistant. Provide clear and comprehensive answers based on ALL the search results provided.",
+    "Professional Expert": "You are a professional expert. Provide detailed, accurate, and well-structured responses. Use formal language and cite reasoning when appropriate. Use ALL search results for comprehensive analysis.",
+    "Creative Writer": "You are a creative writer with a vivid imagination. Use descriptive language, metaphors, and engaging storytelling in your responses. Incorporate ALL search results into your creative narrative.",
+    "Code Helper": "You are a programming expert. Provide clean, well-commented code examples. Explain technical concepts clearly and suggest best practices. Use ALL relevant search results for comprehensive solutions.",
+    "Friendly Tutor": "You are a patient and encouraging tutor. Explain concepts step by step, use simple examples, and ask questions to ensure understanding. Use ALL search results to provide thorough explanations.",
+    "Concise Responder": "You are brief and to the point. Give short, direct answers without unnecessary elaboration, but still use ALL relevant search results.",
     "Custom": ""
 }
 
@@ -858,7 +791,7 @@ def truncate_messages(messages, max_messages=6):
         return messages[-max_messages:]
     return messages
 
-def generate_response(model, messages, system_prompt="", max_tokens=256, temperature=0.7):
+def generate_response(model, messages, system_prompt="", max_tokens=512, temperature=0.7):
     """Generate a response from the model."""
     truncated_messages = truncate_messages(messages)
     prompt = format_prompt(truncated_messages, system_prompt)
@@ -953,7 +886,7 @@ with st.sidebar:
     system_prompt = st.text_area(
         "System prompt:",
         value=st.session_state.system_prompt,
-        height=100,
+        height=150,
         placeholder="Enter instructions for how the AI should behave...",
         key="system_prompt_input"
     )
@@ -967,7 +900,7 @@ with st.sidebar:
     st.header("⚙️ Model Settings")
     temperature = st.slider("Temperature", 0.1, 2.0, 0.7, 0.1, 
                            help="Higher = more creative, Lower = more focused")
-    max_tokens = st.slider("Max Tokens", 64, 512, 256, 64,
+    max_tokens = st.slider("Max Tokens", 256, 1024, 512, 64,
                           help="Maximum length of the response")
     
     st.divider()
@@ -1009,7 +942,7 @@ for message in st.session_state.messages:
 
 # Search functions
 def search_all_sources(query: str) -> dict:
-    """Search ALL sources simultaneously."""
+    """Search ALL sources simultaneously with more results."""
     results = {}
     
     def safe_search(name, func, *args, **kwargs):
@@ -1021,22 +954,22 @@ def search_all_sources(query: str) -> dict:
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         first_word = query.split()[0] if query.strip() else query
         futures = {
-            executor.submit(safe_search, "arxiv", search_arxiv, query, 3): "arxiv",
-            executor.submit(safe_search, "duckduckgo", search_duckduckgo, query, 5): "duckduckgo",
+            executor.submit(safe_search, "arxiv", search_arxiv, query, 5): "arxiv",
+            executor.submit(safe_search, "duckduckgo", search_duckduckgo, query, 8): "duckduckgo",
             executor.submit(safe_search, "duckduckgo_instant", get_instant_answer, query): "duckduckgo_instant",
-            executor.submit(safe_search, "news", search_news, query, 3): "news",
+            executor.submit(safe_search, "news", search_news, query, 5): "news",
             executor.submit(safe_search, "wikipedia", search_wikipedia, query): "wikipedia",
             executor.submit(safe_search, "weather", get_weather_wttr, query): "weather",
             executor.submit(safe_search, "air_quality", get_air_quality, query): "air_quality",
-            executor.submit(safe_search, "wikidata", search_wikidata, query, 3): "wikidata",
-            executor.submit(safe_search, "books", search_books, query, 5): "books",
-            executor.submit(safe_search, "pubmed", search_pubmed, query, 3): "pubmed",
+            executor.submit(safe_search, "wikidata", search_wikidata, query, 5): "wikidata",
+            executor.submit(safe_search, "books", search_books, query, 6): "books",
+            executor.submit(safe_search, "pubmed", search_pubmed, query, 5): "pubmed",
             executor.submit(safe_search, "geocoding", geocode_location, query): "geocoding",
             executor.submit(safe_search, "dictionary", get_definition, first_word): "dictionary",
             executor.submit(safe_search, "country", search_country, query): "country",
-            executor.submit(safe_search, "quotes", search_quotes, query, 3): "quotes",
-            executor.submit(safe_search, "github", search_github_repos, query, 3): "github",
-            executor.submit(safe_search, "stackoverflow", search_stackoverflow, query, 3): "stackoverflow",
+            executor.submit(safe_search, "quotes", search_quotes, query, 5): "quotes",
+            executor.submit(safe_search, "github", search_github_repos, query, 5): "github",
+            executor.submit(safe_search, "stackoverflow", search_stackoverflow, query, 6): "stackoverflow",
         }
         
         for future in concurrent.futures.as_completed(futures):
@@ -1061,31 +994,31 @@ def format_results(query: str, results: dict) -> str:
         wiki = results["wikipedia"]
         if isinstance(wiki, dict) and wiki.get("exists"):
             output.append(f"### 📚 Wikipedia: {wiki.get('title', 'N/A')}")
-            output.append(f"{wiki.get('summary', 'No summary')[:500]}...")
+            output.append(f"{wiki.get('summary', 'No summary')[:800]}...")
             output.append(f"[Read more]({wiki.get('url', '')})\n")
     
     if "duckduckgo" in results:
         ddg = results["duckduckgo"]
         if isinstance(ddg, list) and ddg and "error" not in str(ddg[0]):
             output.append("### 🌐 Web Results")
-            for item in ddg[:3]:
+            for item in ddg[:5]:
                 if isinstance(item, dict):
                     output.append(f"- **{item.get('title', 'N/A')}**")
-                    output.append(f"  {item.get('body', '')[:150]}...")
-                    if item.get('href'):
-                        output.append(f"  [Link]({item.get('href')})")
+                    output.append(f"  {item.get('body', '')[:250]}...")
+                    if item.get('url'):
+                        output.append(f"  [Link]({item.get('url')})")
             output.append("")
     
     if "arxiv" in results:
         arxiv_data = results["arxiv"]
         if isinstance(arxiv_data, list) and arxiv_data and "error" not in str(arxiv_data[0]) and "message" not in str(arxiv_data[0]):
             output.append("### 🔬 Scientific Papers (ArXiv)")
-            for paper in arxiv_data[:3]:
+            for paper in arxiv_data[:4]:
                 if isinstance(paper, dict) and paper.get("title"):
-                    authors = ", ".join(paper.get("authors", [])[:2])
+                    authors = ", ".join(paper.get("authors", [])[:3])
                     output.append(f"- **{paper.get('title', 'N/A')}**")
                     output.append(f"  Authors: {authors} | Published: {paper.get('published', 'N/A')}")
-                    output.append(f"  {paper.get('summary', '')[:200]}...")
+                    output.append(f"  {paper.get('summary', '')[:300]}...")
                     if paper.get('url'):
                         output.append(f"  [View Paper]({paper.get('url')})")
             output.append("")
@@ -1094,12 +1027,12 @@ def format_results(query: str, results: dict) -> str:
         pubmed_data = results["pubmed"]
         if isinstance(pubmed_data, list) and pubmed_data and "error" not in str(pubmed_data[0]) and "message" not in str(pubmed_data[0]):
             output.append("### 🏥 Medical Research (PubMed)")
-            for article in pubmed_data[:3]:
+            for article in pubmed_data[:4]:
                 if isinstance(article, dict) and article.get("title"):
-                    authors = ", ".join(article.get("authors", [])[:2])
+                    authors = ", ".join(article.get("authors", [])[:3])
                     output.append(f"- **{article.get('title', 'N/A')}**")
                     output.append(f"  Authors: {authors} | Year: {article.get('year', 'N/A')}")
-                    output.append(f"  {article.get('abstract', '')[:200]}...")
+                    output.append(f"  {article.get('abstract', '')[:300]}...")
                     if article.get('url'):
                         output.append(f"  [View Article]({article.get('url')})")
             output.append("")
@@ -1108,9 +1041,9 @@ def format_results(query: str, results: dict) -> str:
         books_data = results["books"]
         if isinstance(books_data, list) and books_data and "error" not in str(books_data[0]) and "message" not in str(books_data[0]):
             output.append("### 📖 Books (OpenLibrary)")
-            for book in books_data[:3]:
+            for book in books_data[:4]:
                 if isinstance(book, dict) and book.get("title"):
-                    authors = ", ".join(book.get("authors", [])[:2])
+                    authors = ", ".join(book.get("authors", [])[:3])
                     output.append(f"- **{book.get('title', 'N/A')}**")
                     output.append(f"  Authors: {authors} | First Published: {book.get('first_publish_year', 'N/A')}")
                     if book.get('url'):
@@ -1121,7 +1054,7 @@ def format_results(query: str, results: dict) -> str:
         wikidata = results["wikidata"]
         if isinstance(wikidata, list) and wikidata and "error" not in str(wikidata[0]) and "message" not in str(wikidata[0]):
             output.append("### 🗃️ Wikidata Entities")
-            for entity in wikidata[:3]:
+            for entity in wikidata[:4]:
                 if isinstance(entity, dict) and entity.get("label"):
                     output.append(f"- **{entity.get('label', 'N/A')}**: {entity.get('description', 'No description')}")
                     if entity.get('url'):
@@ -1136,6 +1069,8 @@ def format_results(query: str, results: dict) -> str:
             output.append(f"- Temperature: {weather.get('temperature_c', 'N/A')}°C / {weather.get('temperature_f', 'N/A')}°F")
             output.append(f"- Condition: {weather.get('condition', 'N/A')}")
             output.append(f"- Humidity: {weather.get('humidity', 'N/A')}%")
+            output.append(f"- Wind: {weather.get('wind_speed_kmph', 'N/A')} km/h")
+            output.append(f"- Precipitation: {weather.get('precipitation_mm', 'N/A')} mm")
             output.append("")
     
     if "air_quality" in results:
@@ -1143,9 +1078,9 @@ def format_results(query: str, results: dict) -> str:
         if isinstance(aq, dict) and "error" not in aq and aq.get("data"):
             output.append("### 🌬️ Air Quality")
             output.append(f"- City: {aq.get('city', 'N/A')}")
-            for loc in aq.get("data", [])[:2]:
+            for loc in aq.get("data", [])[:3]:
                 output.append(f"- Location: {loc.get('location', 'N/A')}")
-                for m in loc.get("measurements", [])[:3]:
+                for m in loc.get("measurements", [])[:4]:
                     output.append(f"  - {m.get('parameter', 'N/A')}: {m.get('value', 'N/A')} {m.get('unit', '')}")
             output.append("")
     
@@ -1163,12 +1098,12 @@ def format_results(query: str, results: dict) -> str:
         news_data = results["news"]
         if isinstance(news_data, list) and news_data and "error" not in str(news_data[0]) and "message" not in str(news_data[0]):
             output.append("### 📰 News")
-            for article in news_data[:3]:
+            for article in news_data[:4]:
                 if isinstance(article, dict) and article.get("title"):
                     output.append(f"- **{article.get('title', 'N/A')}**")
                     if article.get('source'):
-                        output.append(f"  Source: {article.get('source')} | {article.get('date', '')}")
-                    output.append(f"  {article.get('body', '')[:150]}...")
+                        output.append(f"  Source: {article.get('source')}")
+                    output.append(f"  {article.get('body', '')[:200]}...")
                     if article.get('url'):
                         output.append(f"  [Read Article]({article.get('url')})")
             output.append("")
@@ -1180,9 +1115,9 @@ def format_results(query: str, results: dict) -> str:
             phonetics = dictionary.get('phonetics', [])
             if phonetics:
                 output.append(f"*Pronunciation: {', '.join(phonetics)}*")
-            for meaning in dictionary.get('meanings', [])[:2]:
+            for meaning in dictionary.get('meanings', [])[:3]:
                 output.append(f"**{meaning.get('part_of_speech', '')}**")
-                for defn in meaning.get('definitions', [])[:2]:
+                for defn in meaning.get('definitions', [])[:3]:
                     output.append(f"- {defn.get('definition', '')}")
                     if defn.get('example'):
                         output.append(f"  *Example: \"{defn.get('example')}\"*")
@@ -1202,10 +1137,10 @@ def format_results(query: str, results: dict) -> str:
                 output.append(f"- **Population**: {pop}")
             languages = country.get('languages', [])
             if languages:
-                output.append(f"- **Languages**: {', '.join(languages[:3])}")
+                output.append(f"- **Languages**: {', '.join(languages[:4])}")
             currencies = country.get('currencies', [])
             if currencies:
-                output.append(f"- **Currencies**: {', '.join(currencies[:2])}")
+                output.append(f"- **Currencies**: {', '.join(currencies[:3])}")
             if country.get('map_url'):
                 output.append(f"- [View on Map]({country.get('map_url')})")
             output.append("")
@@ -1214,7 +1149,7 @@ def format_results(query: str, results: dict) -> str:
         quotes_data = results["quotes"]
         if isinstance(quotes_data, list) and quotes_data and "error" not in str(quotes_data[0]) and "message" not in str(quotes_data[0]):
             output.append("### 💬 Quotes")
-            for quote in quotes_data[:3]:
+            for quote in quotes_data[:4]:
                 if isinstance(quote, dict) and quote.get("content"):
                     output.append(f"> \"{quote.get('content', '')}\"")
                     output.append(f"> — *{quote.get('author', 'Unknown')}*")
@@ -1224,11 +1159,11 @@ def format_results(query: str, results: dict) -> str:
         github_data = results["github"]
         if isinstance(github_data, list) and github_data and "error" not in str(github_data[0]) and "message" not in str(github_data[0]):
             output.append("### 💻 GitHub Repositories")
-            for repo in github_data[:3]:
+            for repo in github_data[:4]:
                 if isinstance(repo, dict) and repo.get("name"):
                     stars = repo.get('stars', 0)
                     output.append(f"- **{repo.get('name', 'N/A')}** ⭐ {stars:,}")
-                    output.append(f"  {repo.get('description', 'No description')[:100]}...")
+                    output.append(f"  {repo.get('description', 'No description')[:150]}...")
                     output.append(f"  Language: {repo.get('language', 'N/A')} | Forks: {repo.get('forks', 0):,}")
                     if repo.get('url'):
                         output.append(f"  [View Repository]({repo.get('url')})")
@@ -1238,12 +1173,12 @@ def format_results(query: str, results: dict) -> str:
         so_data = results["stackoverflow"]
         if isinstance(so_data, list) and so_data and "error" not in str(so_data[0]) and "message" not in str(so_data[0]):
             output.append("### 🔧 Stack Overflow")
-            for q in so_data[:3]:
+            for q in so_data[:4]:
                 if isinstance(q, dict) and q.get("title"):
                     answered_emoji = "✅" if q.get('is_answered') else "❓"
                     output.append(f"- {answered_emoji} **{q.get('title', 'N/A')}**")
                     output.append(f"  Score: {q.get('score', 0)} | Answers: {q.get('answer_count', 0)} | Views: {q.get('view_count', 0):,}")
-                    tags = q.get('tags', [])[:3]
+                    tags = q.get('tags', [])[:4]
                     if tags:
                         output.append(f"  Tags: {', '.join(tags)}")
                     if q.get('url'):
@@ -1252,52 +1187,137 @@ def format_results(query: str, results: dict) -> str:
     
     return "\n".join(output)
 
-def summarize_results_for_ai(results: dict) -> str:
-    """Create a condensed summary of search results for AI context."""
-    summary_parts = []
+def create_comprehensive_context(query: str, results: dict) -> str:
+    """Create comprehensive search context for AI with ALL details."""
+    context_parts = []
     
-    if "wikipedia" in results:
-        wiki = results["wikipedia"]
-        if isinstance(wiki, dict) and wiki.get("exists"):
-            summary_parts.append(f"Wikipedia: {wiki.get('title', '')} - {wiki.get('summary', '')[:300]}")
+    context_parts.append(f"USER QUESTION: {query}")
+    context_parts.append("=" * 80)
+    context_parts.append("FULL SEARCH RESULTS FROM 16 SOURCES:")
+    context_parts.append("=" * 80)
     
+    # 1. Instant Answer
     if "duckduckgo_instant" in results:
         instant = results["duckduckgo_instant"]
         if isinstance(instant, dict) and instant.get("answer"):
-            summary_parts.append(f"Quick Answer: {instant['answer'][:200]}")
+            context_parts.append(f"\n💡 INSTANT ANSWER:")
+            context_parts.append(f"Answer: {instant['answer']}")
+            if instant.get("heading"):
+                context_parts.append(f"Heading: {instant['heading']}")
     
+    # 2. Wikipedia
+    if "wikipedia" in results:
+        wiki = results["wikipedia"]
+        if isinstance(wiki, dict) and wiki.get("exists"):
+            context_parts.append(f"\n📚 WIKIPEDIA:")
+            context_parts.append(f"Title: {wiki.get('title', 'N/A')}")
+            context_parts.append(f"Summary: {wiki.get('summary', '')}")
+            if wiki.get('categories'):
+                context_parts.append(f"Categories: {', '.join(wiki.get('categories', [])[:5])}")
+    
+    # 3. Web Results
     if "duckduckgo" in results:
         ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and ddg:
-            for item in ddg[:2]:
-                if isinstance(item, dict) and item.get("body"):
-                    summary_parts.append(f"Web: {item.get('title', '')} - {item.get('body', '')[:150]}")
+        if isinstance(ddg, list) and ddg and "error" not in str(ddg[0]):
+            context_parts.append(f"\n🌐 WEB RESULTS:")
+            for i, item in enumerate(ddg[:6], 1):
+                if isinstance(item, dict):
+                    context_parts.append(f"{i}. {item.get('title', 'N/A')}")
+                    context_parts.append(f"   {item.get('body', '')}")
     
+    # 4. Scientific Papers
     if "arxiv" in results:
         arxiv_data = results["arxiv"]
-        if isinstance(arxiv_data, list) and arxiv_data:
-            for paper in arxiv_data[:2]:
+        if isinstance(arxiv_data, list) and arxiv_data and "error" not in str(arxiv_data[0]) and "message" not in str(arxiv_data[0]):
+            context_parts.append(f"\n🔬 SCIENTIFIC PAPERS (arXiv):")
+            for i, paper in enumerate(arxiv_data[:5], 1):
                 if isinstance(paper, dict) and paper.get("title"):
-                    summary_parts.append(f"Science: {paper.get('title', '')} - {paper.get('summary', '')[:150]}")
+                    authors = ", ".join(paper.get("authors", [])[:4])
+                    context_parts.append(f"{i}. Title: {paper.get('title', 'N/A')}")
+                    context_parts.append(f"   Authors: {authors}")
+                    context_parts.append(f"   Summary: {paper.get('summary', '')[:400]}...")
     
+    # 5. Medical Research
+    if "pubmed" in results:
+        pubmed_data = results["pubmed"]
+        if isinstance(pubmed_data, list) and pubmed_data and "error" not in str(pubmed_data[0]) and "message" not in str(pubmed_data[0]):
+            context_parts.append(f"\n🏥 MEDICAL RESEARCH (PubMed):")
+            for i, article in enumerate(pubmed_data[:4], 1):
+                if isinstance(article, dict) and article.get("title"):
+                    authors = ", ".join(article.get("authors", [])[:4])
+                    context_parts.append(f"{i}. Title: {article.get('title', 'N/A')}")
+                    context_parts.append(f"   Authors: {authors}")
+                    context_parts.append(f"   Year: {article.get('year', 'N/A')}")
+                    context_parts.append(f"   Abstract: {article.get('abstract', '')[:300]}...")
+    
+    # 6. Books
+    if "books" in results:
+        books_data = results["books"]
+        if isinstance(books_data, list) and books_data and "error" not in str(books_data[0]) and "message" not in str(books_data[0]):
+            context_parts.append(f"\n📖 BOOKS (OpenLibrary):")
+            for i, book in enumerate(books_data[:5], 1):
+                if isinstance(book, dict) and book.get("title"):
+                    authors = ", ".join(book.get("authors", [])[:3])
+                    context_parts.append(f"{i}. Title: {book.get('title', 'N/A')}")
+                    context_parts.append(f"   Authors: {authors}")
+                    context_parts.append(f"   Year: {book.get('first_publish_year', 'N/A')}")
+    
+    # 7. News
     if "news" in results:
         news_data = results["news"]
-        if isinstance(news_data, list) and news_data:
-            for article in news_data[:2]:
+        if isinstance(news_data, list) and news_data and "error" not in str(news_data[0]) and "message" not in str(news_data[0]):
+            context_parts.append(f"\n📰 NEWS:")
+            for i, article in enumerate(news_data[:4], 1):
                 if isinstance(article, dict) and article.get("title"):
-                    summary_parts.append(f"News: {article.get('title', '')} - {article.get('body', '')[:100]}")
+                    context_parts.append(f"{i}. Title: {article.get('title', 'N/A')}")
+                    context_parts.append(f"   Content: {article.get('body', '')[:200]}...")
     
+    # 8. Weather
     if "weather" in results:
         weather = results["weather"]
-        if isinstance(weather, dict) and weather.get("temperature_c"):
-            summary_parts.append(f"Weather in {weather.get('location', 'N/A')}: {weather.get('temperature_c')}°C, {weather.get('condition', '')}")
+        if isinstance(weather, dict) and "error" not in weather and weather.get("temperature_c"):
+            context_parts.append(f"\n🌤️ WEATHER:")
+            context_parts.append(f"Location: {weather.get('location', 'N/A')}")
+            context_parts.append(f"Temperature: {weather.get('temperature_c', 'N/A')}°C / {weather.get('temperature_f', 'N/A')}°F")
+            context_parts.append(f"Condition: {weather.get('condition', 'N/A')}")
+            context_parts.append(f"Humidity: {weather.get('humidity', 'N/A')}%")
     
+    # 9. Country Info
     if "country" in results:
         country = results["country"]
-        if isinstance(country, dict) and country.get("name"):
-            summary_parts.append(f"Country: {country.get('name')} - Capital: {country.get('capital', 'N/A')}, Population: {country.get('population', 'N/A')}")
+        if isinstance(country, dict) and "error" not in country and "message" not in country and country.get("name"):
+            context_parts.append(f"\n🌍 COUNTRY INFO:")
+            context_parts.append(f"Country: {country.get('name', 'N/A')}")
+            context_parts.append(f"Capital: {country.get('capital', 'N/A')}")
+            context_parts.append(f"Population: {country.get('population', 'N/A'):,}" if isinstance(country.get('population'), int) else f"Population: {country.get('population', 'N/A')}")
+            context_parts.append(f"Region: {country.get('region', 'N/A')}")
     
-    return "\n".join(summary_parts) if summary_parts else "No relevant search results found."
+    # 10. Stack Overflow
+    if "stackoverflow" in results:
+        so_data = results["stackoverflow"]
+        if isinstance(so_data, list) and so_data and "error" not in str(so_data[0]) and "message" not in str(so_data[0]):
+            context_parts.append(f"\n🔧 STACK OVERFLOW QUESTIONS:")
+            for i, q in enumerate(so_data[:4], 1):
+                if isinstance(q, dict) and q.get("title"):
+                    context_parts.append(f"{i}. Title: {q.get('title', 'N/A')}")
+                    context_parts.append(f"   Score: {q.get('score', 0)} | Answers: {q.get('answer_count', 0)}")
+    
+    # 11. Other sources (briefly)
+    other_sources = ["wikidata", "geocoding", "air_quality", "dictionary", "quotes", "github"]
+    for source in other_sources:
+        if source in results:
+            data = results[source]
+            if isinstance(data, (list, dict)) and "error" not in str(data):
+                context_parts.append(f"\n📌 {source.upper()} DATA AVAILABLE")
+    
+    context_parts.append("\n" + "=" * 80)
+    context_parts.append("INSTRUCTIONS FOR AI:")
+    context_parts.append("Analyze ALL the above search results comprehensively.")
+    context_parts.append("Provide a detailed, synthesized response that incorporates information from multiple sources.")
+    context_parts.append("Be specific and reference the sources where appropriate.")
+    context_parts.append("=" * 80)
+    
+    return "\n".join(context_parts)
 
 # Chat input
 if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"):
@@ -1320,26 +1340,24 @@ if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"
         
         with tab1:
             if model and st.session_state.model_loaded:
-                with st.spinner("AI is analyzing the results..."):
-                    search_summary = summarize_results_for_ai(search_results)
+                with st.spinner("🤖 AI is analyzing ALL search results..."):
+                    # Create comprehensive context with ALL search data
+                    full_context = create_comprehensive_context(prompt, search_results)
                     
-                    enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
-
-Search Results:
-{search_summary}
-
-Please provide a helpful, synthesized response based on the above information."""
+                    # Prepare messages for AI
+                    ai_messages = [
+                        {"role": "system", "content": st.session_state.system_prompt},
+                        {"role": "user", "content": f"QUESTION: {prompt}\n\n{full_context}\n\nPlease provide a comprehensive analysis based on ALL the search results above."}
+                    ]
                     
-                    temp_messages = st.session_state.messages.copy()
-                    temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
-                    
+                    # Generate AI response
                     ai_response = generate_response(
                         model,
-                        temp_messages,
-                        system_prompt=st.session_state.system_prompt,
+                        ai_messages,
                         max_tokens=max_tokens,
                         temperature=temperature
                     )
+                
                 st.markdown("### 🤖 AI Analysis")
                 st.markdown(ai_response)
             else:
@@ -1354,9 +1372,9 @@ Please provide a helpful, synthesized response based on the above information.""
                 with st.expander(f"📌 {source.replace('_', ' ').title()}"):
                     st.json(data)
     
-    final_response = f"**AI Analysis:**\n{ai_response}\n\n---\n\n**See tabs above for detailed search results and raw data.**"
+    # Store final response
+    final_ai_response = ai_response if model else formatted_results
     st.session_state.messages.append({
         "role": "assistant", 
-        "content": ai_response if model else formatted_results
+        "content": final_ai_response
     })
- 
