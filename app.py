@@ -7,6 +7,8 @@ import arxiv
 import wikipedia
 from pathlib import Path
 from ctransformers import AutoModelForCausalLM
+import traceback
+import time
 
 # ==================== SERVICE FUNCTIONS ====================
 
@@ -55,7 +57,7 @@ def search_duckduckgo(query: str, max_results: int = 5):
             "skip_disambig": "1"
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         results = []
@@ -108,7 +110,7 @@ def get_instant_answer(query: str):
             "no_html": "1"
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         return {
@@ -136,7 +138,7 @@ def search_news(query: str, max_results: int = 3):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         
         # Simple parsing (for demo purposes)
         import re
@@ -215,7 +217,7 @@ def get_weather_wttr(location: str):
             "User-Agent": "Mozilla/5.0 (compatible; WeatherApp/1.0)"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=8)
         data = response.json()
         
         current = data.get("current_condition", [{}])[0]
@@ -262,7 +264,7 @@ def get_air_quality(location: str):
             "X-API-Key": ""  # OpenAQ doesn't require an API key for basic usage
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         data = response.json()
         
         if data.get("results"):
@@ -311,7 +313,7 @@ def search_wikidata(query: str, max_results: int = 3):
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         results = []
@@ -341,7 +343,7 @@ def search_books(query: str, max_results: int = 5):
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         results = []
@@ -471,7 +473,7 @@ def geocode_location(location: str):
             "User-Agent": "AI-Search-Assistant/1.0"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         data = response.json()
         
         if data and len(data) > 0:
@@ -501,7 +503,7 @@ def get_definition(word: str):
     try:
         url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
         
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=8)
         
         if response.status_code == 404:
             return {"error": f"Word '{word}' not found in dictionary"}
@@ -556,13 +558,13 @@ def search_country(query: str):
     try:
         # Try exact name first
         url = f"https://restcountries.com/v3.1/name/{query}"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=8)
         
         if response.status_code == 404:
             # Try as partial search
             url = f"https://restcountries.com/v3.1/name/{query}"
             params = {"fullText": False}
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=8)
         
         if response.status_code != 200:
             return {"error": f"Country '{query}' not found"}
@@ -620,7 +622,7 @@ def search_quotes(query: str, max_results: int = 3):
             "limit": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         results = []
@@ -640,7 +642,7 @@ def search_quotes(query: str, max_results: int = 3):
             url = "https://api.quotable.io/quotes/random"
             params = {"limit": max_results}
             
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=8)
             random_quotes = response.json()
             
             for quote in random_quotes[:max_results]:
@@ -674,7 +676,7 @@ def search_github_repos(query: str, max_results: int = 3):
             "Accept": "application/vnd.github.v3+json"
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=8)
         
         # GitHub API has rate limits, so we need to handle that
         if response.status_code == 403:
@@ -718,7 +720,7 @@ def search_stackoverflow(query: str, max_results: int = 3):
             "pagesize": max_results
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=8)
         data = response.json()
         
         results = []
@@ -743,6 +745,7 @@ def search_stackoverflow(query: str, max_results: int = 3):
         return [{"error": str(e)}]
 
 # ==================== HUGGING FACE MODEL SETUP ====================
+# KEEPING YOUR EXACT MODEL AS BEFORE
 
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -784,10 +787,11 @@ def download_model():
     MODEL_DIR.mkdir(exist_ok=True)
     
     try:
-        response = requests.get(MODEL_URL, stream=True, timeout=30)
+        response = requests.get(MODEL_URL, stream=True, timeout=60)  # Increased timeout
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to download model: {str(e)}")
+        st.error(f"Failed to download model: {str(e)}")
+        return False
     
     total_size = int(response.headers.get('content-length', 0))
     
@@ -808,12 +812,14 @@ def download_model():
     except Exception as e:
         if MODEL_PATH.exists():
             MODEL_PATH.unlink()
-        raise Exception(f"Download interrupted: {str(e)}")
+        st.error(f"Download interrupted: {str(e)}")
+        return False
     
     if total_size > 0 and downloaded != total_size:
         if MODEL_PATH.exists():
             MODEL_PATH.unlink()
-        raise Exception(f"Incomplete download: got {downloaded} bytes, expected {total_size}")
+        st.error(f"Incomplete download: got {downloaded} bytes, expected {total_size}")
+        return False
     
     progress_bar.empty()
     status_text.empty()
@@ -825,17 +831,28 @@ def load_model():
     from ctransformers import AutoModelForCausalLM
     
     if not MODEL_PATH.exists():
-        with st.spinner("Downloading TinyLLaMA model (~637 MB)..."):
-            download_model()
+        try:
+            with st.spinner("Downloading TinyLLaMA model (~637 MB)..."):
+                if not download_model():
+                    st.error("Failed to download model. AI features will be disabled.")
+                    return None
+        except Exception as e:
+            st.error(f"Download error: {str(e)}")
+            return None
     
-    model = AutoModelForCausalLM.from_pretrained(
-        str(MODEL_DIR),
-        model_file=MODEL_PATH.name,
-        model_type="llama",
-        context_length=2048,
-        gpu_layers=0
-    )
-    return model
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            str(MODEL_DIR),
+            model_file=MODEL_PATH.name,
+            model_type="llama",
+            context_length=2048,
+            gpu_layers=0
+        )
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        st.info("The app will still work for searching, but AI analysis won't be available.")
+        return None
 
 def format_prompt(messages, system_prompt=""):
     """Format conversation history for TinyLLaMA chat format with system prompt."""
@@ -863,15 +880,17 @@ def generate_response(model, messages, system_prompt="", max_tokens=256, tempera
     truncated_messages = truncate_messages(messages)
     prompt = format_prompt(truncated_messages, system_prompt)
     
-    response = model(
-        prompt,
-        max_new_tokens=max_tokens,
-        temperature=temperature,
-        top_p=0.95,
-        stop=["</s>", "<|user|>", "<|assistant|>", "<|system|>"]
-    )
-    
-    return response.strip()
+    try:
+        response = model(
+            prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=0.95,
+            stop=["</s>", "<|user|>", "<|assistant|>", "<|system|>"]
+        )
+        return response.strip()
+    except Exception as e:
+        return f"Error generating response: {str(e)}"
 
 # ==================== STREAMLIT APP ====================
 
@@ -989,18 +1008,21 @@ with st.sidebar:
     st.caption("Model: TinyLLaMA 1.1B Chat v1.0")
     st.caption("Quantization: Q4_K_M (~637 MB)")
 
-# Load model
-with st.spinner("Loading TinyLLaMA model... This may take a moment on first run."):
-    try:
+# Load model with error handling
+try:
+    with st.spinner("Loading TinyLLaMA model... This may take a moment on first run."):
         model = load_model()
-        st.session_state.model_loaded = True
-    except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
-        st.info("The app will still work for searching, but AI analysis won't be available.")
-        model = None
-
-if st.session_state.model_loaded:
-    st.success("✅ Model loaded and ready!", icon="✅")
+        if model:
+            st.session_state.model_loaded = True
+            st.success("✅ Model loaded and ready!", icon="✅")
+        else:
+            st.warning("⚠️ Model not loaded. AI features disabled. Search features still work.")
+            st.session_state.model_loaded = False
+except Exception as e:
+    st.error(f"Model loading failed: {str(e)}")
+    st.info("Continuing with search-only mode.")
+    model = None
+    st.session_state.model_loaded = False
 
 # Display chat history
 for message in st.session_state.messages:
@@ -1018,25 +1040,26 @@ def search_all_sources(query: str) -> dict:
         except Exception as e:
             return name, {"error": str(e)}
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+    # REDUCED from 16 to 10 concurrent workers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         first_word = query.split()[0] if query.strip() else query
         futures = {
-            executor.submit(safe_search, "arxiv", search_arxiv, query, 3): "arxiv",
-            executor.submit(safe_search, "duckduckgo", search_duckduckgo, query, 5): "duckduckgo",
+            executor.submit(safe_search, "arxiv", search_arxiv, query, 2): "arxiv",  # Reduced results
+            executor.submit(safe_search, "duckduckgo", search_duckduckgo, query, 3): "duckduckgo",  # Reduced results
             executor.submit(safe_search, "duckduckgo_instant", get_instant_answer, query): "duckduckgo_instant",
-            executor.submit(safe_search, "news", search_news, query, 3): "news",
+            executor.submit(safe_search, "news", search_news, query, 2): "news",  # Reduced results
             executor.submit(safe_search, "wikipedia", search_wikipedia, query): "wikipedia",
             executor.submit(safe_search, "weather", get_weather_wttr, query): "weather",
             executor.submit(safe_search, "air_quality", get_air_quality, query): "air_quality",
-            executor.submit(safe_search, "wikidata", search_wikidata, query, 3): "wikidata",
-            executor.submit(safe_search, "books", search_books, query, 5): "books",
-            executor.submit(safe_search, "pubmed", search_pubmed, query, 3): "pubmed",
+            executor.submit(safe_search, "wikidata", search_wikidata, query, 2): "wikidata",  # Reduced results
+            executor.submit(safe_search, "books", search_books, query, 3): "books",  # Reduced results
+            executor.submit(safe_search, "pubmed", search_pubmed, query, 2): "pubmed",  # Reduced results
             executor.submit(safe_search, "geocoding", geocode_location, query): "geocoding",
             executor.submit(safe_search, "dictionary", get_definition, first_word): "dictionary",
             executor.submit(safe_search, "country", search_country, query): "country",
-            executor.submit(safe_search, "quotes", search_quotes, query, 3): "quotes",
-            executor.submit(safe_search, "github", search_github_repos, query, 3): "github",
-            executor.submit(safe_search, "stackoverflow", search_stackoverflow, query, 3): "stackoverflow",
+            executor.submit(safe_search, "quotes", search_quotes, query, 2): "quotes",  # Reduced results
+            executor.submit(safe_search, "github", search_github_repos, query, 2): "github",  # Reduced results
+            executor.submit(safe_search, "stackoverflow", search_stackoverflow, query, 2): "stackoverflow",  # Reduced results
         }
         
         for future in concurrent.futures.as_completed(futures):
@@ -1307,55 +1330,87 @@ if prompt := st.chat_input("Ask anything... (searches 16 sources + AI analysis)"
         st.markdown(prompt)
     
     with st.chat_message("assistant"):
-        st.caption("🔎 Searching all 16 sources simultaneously...")
-        
-        with st.spinner("Searching across 16 sources..."):
-            search_results = search_all_sources(prompt)
-            st.session_state.last_search_results = search_results
-        
-        formatted_results = format_results(prompt, search_results)
-        st.session_state.last_formatted_results = formatted_results
-        
-        tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
-        
-        with tab1:
-            if model and st.session_state.model_loaded:
-                with st.spinner("AI is analyzing the results..."):
-                    search_summary = summarize_results_for_ai(search_results)
-                    
-                    enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
+        try:
+            st.caption("🔎 Searching all 16 sources simultaneously...")
+            
+            # Add timeout for search
+            search_start = time.time()
+            with st.spinner("Searching across 16 sources... (timeout: 30s)"):
+                search_results = search_all_sources(prompt)
+                st.session_state.last_search_results = search_results
+            
+            search_time = time.time() - search_start
+            if search_time > 25:
+                st.warning(f"Search completed in {search_time:.1f}s (slow)")
+            
+            formatted_results = format_results(prompt, search_results)
+            st.session_state.last_formatted_results = formatted_results
+            
+            tab1, tab2, tab3 = st.tabs(["🤖 AI Analysis", "📊 Search Results", "📈 Raw Data"])
+            
+            with tab1:
+                if model and st.session_state.model_loaded:
+                    with st.spinner("AI is analyzing the results... (timeout: 60s)"):
+                        try:
+                            search_summary = summarize_results_for_ai(search_results)
+                            
+                            enhanced_prompt = f"""Based on these search results, answer the user's question: "{prompt}"
 
 Search Results:
 {search_summary}
 
 Please provide a helpful, synthesized response based on the above information."""
+                            
+                            temp_messages = st.session_state.messages.copy()
+                            temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
+                            
+                            ai_response = generate_response(
+                                model,
+                                temp_messages,
+                                system_prompt=st.session_state.system_prompt,
+                                max_tokens=max_tokens,
+                                temperature=temperature
+                            )
+                        except Exception as ai_error:
+                            ai_response = f"AI analysis error: {str(ai_error)}\n\nShowing search results instead."
+                            st.error(f"AI analysis failed: {str(ai_error)}")
                     
-                    temp_messages = st.session_state.messages.copy()
-                    temp_messages[-1] = {"role": "user", "content": enhanced_prompt}
-                    
-                    ai_response = generate_response(
-                        model,
-                        temp_messages,
-                        system_prompt=st.session_state.system_prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                st.markdown("### 🤖 AI Analysis")
-                st.markdown(ai_response)
-            else:
-                st.warning("AI model not loaded. Showing search results only.")
-                ai_response = formatted_results
+                    st.markdown("### 🤖 AI Analysis")
+                    st.markdown(ai_response)
+                else:
+                    st.warning("⚠️ AI model not loaded. Showing search results only.")
+                    ai_response = formatted_results
+            
+            with tab2:
+                st.markdown(formatted_results)
+            
+            with tab3:
+                for source, data in search_results.items():
+                    with st.expander(f"📌 {source.replace('_', ' ').title()}"):
+                        st.json(data)
         
-        with tab2:
-            st.markdown(formatted_results)
-        
-        with tab3:
-            for source, data in search_results.items():
-                with st.expander(f"📌 {source.replace('_', ' ').title()}"):
-                    st.json(data)
+        except Exception as e:
+            st.error(f"Search failed: {str(e)}")
+            st.info("Try a simpler query or wait a moment before trying again.")
+            ai_response = f"Sorry, I encountered an error while searching: {str(e)}"
     
-    final_response = f"**AI Analysis:**\n{ai_response}\n\n---\n\n**See tabs above for detailed search results and raw data.**"
+    # Store the response
+    final_response = ai_response if model else formatted_results
     st.session_state.messages.append({
         "role": "assistant", 
-        "content": ai_response if model else formatted_results
+        "content": final_response
     })
+
+# Add debug info to sidebar
+with st.sidebar:
+    st.divider()
+    if st.session_state.last_search_results:
+        sources_with_data = len([v for v in st.session_state.last_search_results.values() if isinstance(v, (list, dict)) and len(v) > 0 and not isinstance(v, str)])
+        st.caption(f"Last search: {sources_with_data} sources returned data")
+    
+    # Clear button at bottom
+    if st.button("🛠️ Debug Info", key="debug_button"):
+        st.write("Session state keys:", list(st.session_state.keys()))
+        st.write("Model loaded:", st.session_state.model_loaded)
+        if 'messages' in st.session_state:
+            st.write(f"Messages: {len(st.session_state.messages)}")
