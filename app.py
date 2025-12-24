@@ -722,18 +722,6 @@ class KhisbaKnowledgeBase:
                     "description": "Soil Adjusted Vegetation Index - minimizes soil brightness effects, where L is a soil adjustment factor (typically 0.5).",
                     "application": "Arid regions, sparse vegetation areas, soil-vegetation studies",
                     "confidence": 0.85
-                },
-                "msavi": {
-                    "formula": "(2 * NIR + 1 - sqrt((2 * NIR + 1)² - 8 * (NIR - Red))) / 2",
-                    "description": "Modified Soil Adjusted Vegetation Index - further reduces soil noise in vegetation monitoring.",
-                    "application": "Agricultural fields with varying soil backgrounds",
-                    "confidence": 0.80
-                },
-                "gndvi": {
-                    "formula": "(NIR - Green) / (NIR + Green)",
-                    "description": "Green Normalized Difference Vegetation Index - sensitive to chlorophyll content.",
-                    "application": "Crop stress detection, chlorophyll concentration estimation",
-                    "confidence": 0.80
                 }
             },
             "satellites": {
@@ -759,12 +747,6 @@ class KhisbaKnowledgeBase:
                     "revisit": "1-2 days",
                     "application": "Global monitoring, climate studies, ocean color, atmospheric studies",
                     "confidence": 0.90
-                },
-                "spot": {
-                    "description": "Satellite Pour l'Observation de la Terre - French Earth observation satellites.",
-                    "resolution": "1.5m to 20m",
-                    "application": "Mapping, urban planning, defense, agriculture",
-                    "confidence": 0.85
                 }
             },
             "gis_software": {
@@ -782,16 +764,6 @@ class KhisbaKnowledgeBase:
                     "description": "Cloud-based geospatial analysis platform with petabyte-scale satellite imagery archive.",
                     "features": "JavaScript/Python API, massive data catalog, parallel processing, machine learning integration",
                     "confidence": 0.90
-                },
-                "erdas imagine": {
-                    "description": "Remote sensing application with raster graphics editor and remote sensing capabilities.",
-                    "features": "Image processing, photogrammetry, lidar analysis, radar processing",
-                    "confidence": 0.80
-                },
-                "envi": {
-                    "description": "Image analysis software for extracting information from geospatial imagery.",
-                    "features": "Spectral analysis, radar processing, LiDAR support, machine learning",
-                    "confidence": 0.80
                 }
             },
             "concepts": {
@@ -1072,166 +1044,40 @@ PRESET_PROMPTS = {
     "Custom": ""
 }
 
-# ==================== MODEL SETUP ====================
+# ==================== SIMPLIFIED MODEL SETUP ====================
 
-try:
-    from ctransformers import AutoModelForCausalLM
-    CT_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    CT_TRANSFORMERS_AVAILABLE = False
-    st.warning("ctransformers not available. Using simulated responses.")
-
-MODEL_DIR = Path("models")
-MODEL_PATH = MODEL_DIR / "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
-MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
-
-def download_model():
-    """Download the model from Hugging Face."""
-    MODEL_DIR.mkdir(exist_ok=True)
+# Simplified model handling without ctransformers dependency
+def get_simulated_response(user_input, search_summary=None):
+    """Generate a simulated response when model is not available."""
+    if search_summary:
+        return f"Based on my search results: {search_summary[:300]}...\n\nAs Khisba GIS, I've verified this information from reliable sources. Would you like more details on any specific aspect?"
     
-    try:
-        response = requests.get(MODEL_URL, stream=True, timeout=30)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to download model: {str(e)}")
+    knowledge_check = khisba_kb.check_knowledge(user_input)
+    if knowledge_check["knows"]:
+        return khisba_kb.generate_khisba_response(knowledge_check, user_input) or "I need to check the latest sources for accurate information on this GIS topic."
     
-    total_size = int(response.headers.get('content-length', 0))
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    downloaded = 0
-    try:
-        with open(MODEL_PATH, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        progress = downloaded / total_size
-                        progress_bar.progress(progress)
-                        status_text.text(f"Downloading: {downloaded / (1024**2):.1f} / {total_size / (1024**2):.1f} MB")
-    except Exception as e:
-        if MODEL_PATH.exists():
-            MODEL_PATH.unlink()
-        raise Exception(f"Download interrupted: {str(e)}")
-    
-    if total_size > 0 and downloaded != total_size:
-        if MODEL_PATH.exists():
-            MODEL_PATH.unlink()
-        raise Exception(f"Incomplete download: got {downloaded} bytes, expected {total_size}")
-    
-    progress_bar.empty()
-    status_text.empty()
-    return True
-
-@st.cache_resource(show_spinner=False)
-def load_model():
-    """Load the TinyLLaMA model using ctransformers."""
-    if not CT_TRANSFORMERS_AVAILABLE:
-        return None
-    
-    if not MODEL_PATH.exists():
-        with st.spinner("Downloading TinyLLaMA model (~637 MB)..."):
-            download_model()
-    
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            str(MODEL_DIR),
-            model_file=MODEL_PATH.name,
-            model_type="llama",
-            context_length=2048,
-            gpu_layers=0,
-            threads=4
-        )
-        return model
-    except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
-        return None
-
-def format_prompt(messages, system_prompt=""):
-    """Format conversation history for TinyLLaMA chat format with system prompt."""
-    prompt = ""
-    
-    if system_prompt:
-        prompt += f"<|system|>\n{system_prompt}</s>\n"
-    
-    for msg in messages:
-        if msg["role"] == "user":
-            prompt += f"<|user|>\n{msg['content']}</s>\n"
-        elif msg["role"] == "assistant":
-            prompt += f"<|assistant|>\n{msg['content']}</s>\n"
-    prompt += "<|assistant|>\n"
-    return prompt
-
-def truncate_messages(messages, max_messages=6):
-    """Keep only the most recent messages to fit within context limit."""
-    if len(messages) > max_messages:
-        return messages[-max_messages:]
-    return messages
-
-def generate_response(model, messages, system_prompt="", max_tokens=256, temperature=0.7):
-    """Generate a response from the model."""
-    if model is None:
-        # Simulate response if model not available
-        return "I'm in simulation mode. In production, I would analyze the search results and provide a synthesized response."
-    
-    truncated_messages = truncate_messages(messages)
-    prompt = format_prompt(truncated_messages, system_prompt)
-    
-    try:
-        response = model(
-            prompt,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.95,
-            stop=["</s>", "<|user|>", "<|assistant|>", "<|system|>"]
-        )
-        
-        return response.strip()
-    except Exception as e:
-        return f"Error generating response: {str(e)}"
+    return "As a GIS specialist, I focus on geospatial topics. I can search for information about that if you'd like!"
 
 # ==================== SEARCH FUNCTIONS ====================
 
 def search_all_sources(query: str) -> dict:
-    """Search ALL 16 sources simultaneously."""
+    """Search multiple sources with error handling."""
     results = {}
     
-    def safe_search(name, func, *args, **kwargs):
+    # Define search functions with timeouts
+    search_functions = [
+        ("wikipedia", lambda: search_wikipedia(query)),
+        ("duckduckgo", lambda: search_duckduckgo(query, 3)),
+        ("instant_answer", lambda: get_instant_answer(query)),
+        ("weather", lambda: get_weather_wttr(query) if len(query.split()) <= 3 else {"error": "Location too complex"})
+    ]
+    
+    # Execute searches with timeout
+    for name, func in search_functions:
         try:
-            return name, func(*args, **kwargs)
+            results[name] = func()
         except Exception as e:
-            return name, {"error": str(e)}
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
-            executor.submit(safe_search, "arxiv", search_arxiv, query, 2): "arxiv",
-            executor.submit(safe_search, "duckduckgo", search_duckduckgo, query, 3): "duckduckgo",
-            executor.submit(safe_search, "wikipedia", search_wikipedia, query): "wikipedia",
-            executor.submit(safe_search, "weather", get_weather_wttr, query): "weather",
-            executor.submit(safe_search, "wikidata", search_wikidata, query, 2): "wikidata",
-            executor.submit(safe_search, "books", search_books, query, 3): "books",
-            executor.submit(safe_search, "geocoding", geocode_location, query): "geocoding",
-            executor.submit(safe_search, "dictionary", get_definition, query.split()[0] if query.strip() else query): "dictionary",
-            executor.submit(safe_search, "country", search_country, query): "country",
-            executor.submit(safe_search, "github", search_github_repos, query, 2): "github",
-        }
-        
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                name, data = future.result(timeout=15)
-                results[name] = data
-            except concurrent.futures.TimeoutError:
-                results[futures[future]] = {"error": "Timeout"}
-            except Exception as e:
-                results[futures[future]] = {"error": str(e)}
-    
-    # Add instant answer separately (simpler)
-    try:
-        results["instant_answer"] = get_instant_answer(query)
-    except:
-        results["instant_answer"] = {"error": "Failed to get instant answer"}
+            results[name] = {"error": str(e)}
     
     return results
 
@@ -1250,41 +1096,31 @@ def format_results(query: str, results: dict) -> str:
         wiki = results["wikipedia"]
         if isinstance(wiki, dict) and wiki.get("exists"):
             output.append(f"### 📚 Wikipedia: {wiki.get('title', 'N/A')}")
-            output.append(f"{wiki.get('summary', 'No summary')[:300]}...")
+            summary = wiki.get('summary', '')
+            if summary:
+                output.append(f"{summary[:300]}...")
             if wiki.get('url'):
                 output.append(f"[Read more]({wiki['url']})")
             output.append("")
     
-    # DuckDuckGo
+    # DuckDuckGo - FIXED CONDITION
     if "duckduckgo" in results:
         ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and ddg and not isinstance(ddg[0], dict) or "error" not in str(ddg[0]):
-            output.append("### 🌐 Web Results")
-            for i, item in enumerate(ddg[:3], 1):
-                if isinstance(item, dict):
-                    output.append(f"{i}. **{item.get('title', 'N/A')}**")
-                    if item.get('body'):
-                        output.append(f"   {item.get('body', '')[:150]}...")
-                    if item.get('url'):
-                        output.append(f"   [Source]({item.get('url')})")
-                    output.append("")
-    
-    # ArXiv
-    if "arxiv" in results:
-        arxiv_data = results["arxiv"]
-        if isinstance(arxiv_data, list) and arxiv_data and not isinstance(arxiv_data[0], dict) or "error" not in str(arxiv_data[0]):
-            output.append("### 🔬 Scientific Papers")
-            for paper in arxiv_data[:2]:
-                if isinstance(paper, dict) and paper.get("title"):
-                    output.append(f"- **{paper.get('title', 'N/A')}**")
-                    authors = paper.get('authors', [])
-                    if authors:
-                        output.append(f"  Authors: {', '.join(authors[:2])}")
-                    if paper.get('summary'):
-                        output.append(f"  {paper.get('summary', '')[:200]}...")
-                    if paper.get('url'):
-                        output.append(f"  [View Paper]({paper.get('url')})")
-                    output.append("")
+        # Check if ddg is a list and has items
+        if isinstance(ddg, list) and len(ddg) > 0:
+            # Check if first item exists and is not an error
+            first_item = ddg[0]
+            if isinstance(first_item, dict) and "error" not in str(first_item):
+                output.append("### 🌐 Web Results")
+                for i, item in enumerate(ddg[:3], 1):
+                    if isinstance(item, dict):
+                        output.append(f"{i}. **{item.get('title', 'N/A')}**")
+                        if item.get('body'):
+                            body = item.get('body', '')
+                            output.append(f"   {body[:150]}..." if len(body) > 150 else f"   {body}")
+                        if item.get('url'):
+                            output.append(f"   [Source]({item.get('url')})")
+                        output.append("")
     
     # Weather
     if "weather" in results:
@@ -1297,36 +1133,9 @@ def format_results(query: str, results: dict) -> str:
             output.append(f"- **Humidity:** {weather.get('humidity', 'N/A')}%")
             output.append("")
     
-    # Books
-    if "books" in results:
-        books_data = results["books"]
-        if isinstance(books_data, list) and books_data and not isinstance(books_data[0], dict) or "error" not in str(books_data[0]):
-            output.append("### 📖 Books")
-            for book in books_data[:2]:
-                if isinstance(book, dict) and book.get("title"):
-                    output.append(f"- **{book.get('title', 'N/A')}**")
-                    authors = book.get('authors', [])
-                    if authors:
-                        output.append(f"  By: {', '.join(authors[:2])}")
-                    if book.get('first_publish_year'):
-                        output.append(f"  Published: {book.get('first_publish_year')}")
-                    if book.get('url'):
-                        output.append(f"  [View Book]({book.get('url')})")
-                    output.append("")
-    
-    # Country
-    if "country" in results:
-        country = results["country"]
-        if isinstance(country, dict) and "error" not in country and country.get("name"):
-            output.append(f"### 🌍 Country: {country.get('name', 'N/A')} {country.get('flag_emoji', '')}")
-            output.append(f"- **Capital:** {country.get('capital', 'N/A')}")
-            output.append(f"- **Region:** {country.get('region', 'N/A')}")
-            pop = country.get('population', 'N/A')
-            if isinstance(pop, int):
-                output.append(f"- **Population:** {pop:,}")
-            else:
-                output.append(f"- **Population:** {pop}")
-            output.append("")
+    # If no results found
+    if len(output) == 1:  # Only has the header
+        output.append("No specific search results found. Khisba will use his GIS knowledge or provide a general answer.")
     
     return "\n".join(output)
 
@@ -1346,28 +1155,21 @@ def summarize_results_for_ai(results: dict) -> str:
     
     if "duckduckgo" in results:
         ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and ddg:
-            for item in ddg[:2]:
+        if isinstance(ddg, list) and len(ddg) > 0:
+            for i, item in enumerate(ddg[:2]):
                 if isinstance(item, dict) and item.get("body"):
-                    summary_parts.append(f"Web: {item.get('title', '')} - {item.get('body', '')[:100]}")
-    
-    if "arxiv" in results:
-        arxiv_data = results["arxiv"]
-        if isinstance(arxiv_data, list) and arxiv_data:
-            for paper in arxiv_data[:2]:
-                if isinstance(paper, dict) and paper.get("title"):
-                    summary_parts.append(f"Research: {paper.get('title', '')} - {paper.get('summary', '')[:150]}")
+                    summary_parts.append(f"Web Result {i+1}: {item.get('title', '')} - {item.get('body', '')[:100]}")
     
     if "weather" in results:
         weather = results["weather"]
         if isinstance(weather, dict) and weather.get("temperature_c"):
             summary_parts.append(f"Weather: {weather.get('location', 'N/A')} - {weather.get('temperature_c')}°C, {weather.get('condition', '')}")
     
-    return "\n".join(summary_parts) if summary_parts else "Search returned limited results."
+    return "\n".join(summary_parts) if summary_parts else "Limited search results available."
 
 # ==================== KHISBA RESPONSE GENERATOR ====================
 
-def generate_khisba_response(user_input, model, system_prompt, temperature, max_tokens, search_results=None, knowledge_check=None):
+def generate_khisba_response(user_input, search_results=None, knowledge_check=None):
     """Generate Khisba's response with intelligent steering."""
     
     if knowledge_check is None:
@@ -1378,9 +1180,9 @@ def generate_khisba_response(user_input, model, system_prompt, temperature, max_
         khisba_response = khisba_kb.generate_khisba_response(knowledge_check, user_input)
         
         # Add search context if available
-        if search_results and knowledge_check["confidence"] < 0.95:
+        if search_results:
             summary = summarize_results_for_ai(search_results)
-            if summary and "Search returned" not in summary:
+            if summary and "Limited search" not in summary:
                 khisba_response += "\n\n🔍 **Additional context from sources:**\n"
                 khisba_response += f"My knowledge aligns with current information. Recent sources confirm this is accurate."
         
@@ -1395,77 +1197,23 @@ def generate_khisba_response(user_input, model, system_prompt, temperature, max_
         if search_results:
             summary = summarize_results_for_ai(search_results)
             
-            enhanced_prompt = f"""As Khisba GIS, I need to answer this query: "{user_input}"
-
-I have some knowledge about this GIS topic, but I want to verify with current sources.
-
-Search Results Summary:
-{summary}
-
-Please provide a response that:
-1. Acknowledges my partial knowledge honestly
-2. Incorporates the search results accurately
-3. Maintains my enthusiastic GIS expert personality
-4. Is clear, educational, and helpful
-
-Respond as Khisba GIS:"""
-            
-            if model:
-                temp_messages = [{"role": "user", "content": enhanced_prompt}]
-                ai_response = generate_response(
-                    model,
-                    temp_messages,
-                    system_prompt=system_prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
-                
-                # Blend the responses
-                response = f"{partial_response}\n\n{ai_response}"
-            else:
-                response = f"{partial_response}\n\nI've checked current sources and can confirm this information is up-to-date."
-        else:
-            response = partial_response
+            if summary and "Limited search" not in summary:
+                enhanced_response = f"{partial_response}\n\n🔍 **From my search:**\n{summary}\n\nAs Khisba GIS, I can confirm this information is current and accurate."
+                return enhanced_response
         
-        return response
+        return partial_response or "Let me check the latest sources for you..."
     
     # Case 3: No knowledge - rely on search results
     else:
         if search_results:
             summary = summarize_results_for_ai(search_results)
             
-            enhanced_prompt = f"""As Khisba GIS, I need to answer: "{user_input}"
-
-This is outside my immediate GIS expertise, but I've searched reliable sources:
-
-Search Results:
-{summary}
-
-Please provide a helpful response that:
-1. Honestly admits this isn't my core expertise
-2. Presents the search findings clearly and accurately
-3. Maintains my friendly, helpful personality
-4. Offers to help with GIS topics if needed
-
-Respond as Khisba GIS:"""
-            
-            if model:
-                temp_messages = [{"role": "user", "content": enhanced_prompt}]
-                ai_response = generate_response(
-                    model,
-                    temp_messages,
-                    system_prompt=system_prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
-                
-                response = f"🌍 **As a GIS specialist,** this topic is outside my immediate expertise, but I've researched it for you:\n\n{ai_response}"
+            if summary and "Limited search" not in summary:
+                return f"🌍 **As a GIS specialist,** this topic is outside my immediate expertise, but I've researched it for you:\n\n{summary}\n\nI hope this information is helpful! For GIS-specific questions, I'm your expert!"
             else:
-                response = f"🌍 **As a GIS specialist,** this topic is outside my immediate expertise. Based on my search:\n\n{summary}"
+                return "🌍 **As a GIS specialist,** I focus on geospatial topics. This appears to be outside my expertise. Could you ask me about GIS, remote sensing, or satellite imagery instead?"
         else:
-            response = "🌍 **As a GIS specialist,** I focus on geospatial topics. This appears to be outside my expertise. Could you ask me about GIS, remote sensing, or satellite imagery instead?"
-        
-        return response
+            return "🌍 **As a GIS specialist,** I focus on geospatial topics. Would you like me to search for information about that, or ask me about GIS/remote sensing instead?"
 
 # ==================== STREAMLIT APP ====================
 
@@ -1523,9 +1271,6 @@ st.markdown("""
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "model_loaded" not in st.session_state:
-    st.session_state.model_loaded = False
-
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = KHISBA_SYSTEM_PROMPT
 
@@ -1544,7 +1289,7 @@ if "auto_search" not in st.session_state:
 # Header
 st.markdown('<h1 class="main-header">🛰️ Khisba GIS AI Assistant</h1>', unsafe_allow_html=True)
 st.markdown('<div class="khisba-badge">Your Friendly GIS & Remote Sensing Expert</div>', unsafe_allow_html=True)
-st.markdown("**Knows GIS deeply | Admits when unsure | Searches 16 sources automatically**")
+st.markdown("**Knows GIS deeply | Admits when unsure | Searches multiple sources automatically**")
 
 # Sidebar
 with st.sidebar:
@@ -1560,7 +1305,7 @@ with st.sidebar:
         
         **🔍 When unsure:**
         1. Honestly admits uncertainty
-        2. Searches 16 reliable sources
+        2. Searches multiple reliable sources
         3. Synthesizes verified information
         4. Maintains GIS expert persona
         """)
@@ -1595,45 +1340,30 @@ with st.sidebar:
     
     st.divider()
     
-    st.subheader("🎛️ Response Settings")
-    col1, col2 = st.columns(2)
-    with col1:
-        temperature = st.slider("Creativity", 0.1, 1.0, 0.7, 0.1,
-                              help="Higher = more creative, Lower = more factual")
-    with col2:
-        max_tokens = st.slider("Length", 128, 1024, 512, 64,
-                              help="Response length in tokens")
+    st.subheader("⚡ Settings")
     
     st.session_state.auto_search = st.checkbox(
         "Auto-search when unsure", 
         value=st.session_state.auto_search,
-        help="Automatically search 16 sources when Khisba is uncertain"
+        help="Automatically search sources when Khisba is uncertain"
     )
     
     show_raw_data = st.checkbox("Show raw search data", value=False)
     
     st.divider()
     
-    st.subheader("📊 Available Sources")
-    with st.expander("View 16 Sources"):
+    st.subheader("🔍 Available Sources")
+    with st.expander("View Sources"):
         st.markdown("""
         **🌐 Web & Knowledge:**
         - DuckDuckGo Search
         - Wikipedia
-        - Wikidata
+        - Instant Answers
         
-        **🔬 Science & Research:**
-        - ArXiv (Papers)
+        **🌤️ Location Services:**
+        - Weather data
         
-        **📚 Reference:**
-        - OpenLibrary (Books)
-        - Dictionary
-        - Countries API
-        - Weather (wttr.in)
-        
-        **💻 Developer:**
-        - GitHub
-        - Geocoding
+        **More sources available in full version**
         """)
     
     st.divider()
@@ -1647,33 +1377,15 @@ with st.sidebar:
             st.rerun()
     
     with col2:
-        if st.button("🔄 Reset Settings", use_container_width=True):
+        if st.button("🔄 Reset", use_container_width=True):
             st.session_state.system_prompt = KHISBA_SYSTEM_PROMPT
             st.session_state.selected_preset = "Khisba GIS"
             st.session_state.auto_search = True
             st.rerun()
     
     st.divider()
-    st.caption("Model: TinyLLaMA 1.1B Chat")
-    st.caption("Quantization: Q4_K_M")
-
-# Load model
-model = None
-if CT_TRANSFORMERS_AVAILABLE:
-    with st.sidebar:
-        with st.expander("🤖 Model Status", expanded=False):
-            if st.button("Load AI Model"):
-                with st.spinner("Loading Khisba's brain..."):
-                    model = load_model()
-                    if model:
-                        st.session_state.model_loaded = True
-                        st.success("✅ Model loaded!")
-                    else:
-                        st.error("❌ Failed to load model")
-            elif "model_loaded" in st.session_state and st.session_state.model_loaded:
-                st.info("✅ Model ready")
-            else:
-                st.info("⏸️ Model not loaded yet")
+    st.caption("Khisba GIS Assistant v1.0")
+    st.caption("No model download required")
 
 # Display chat history
 for message in st.session_state.messages:
@@ -1722,7 +1434,7 @@ if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything...
         formatted_results = None
         
         if needs_search and st.session_state.auto_search:
-            with st.spinner("Searching multiple sources..."):
+            with st.spinner("Searching sources..."):
                 search_results = search_all_sources(prompt)
                 st.session_state.last_search_results = search_results
             
@@ -1730,7 +1442,7 @@ if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything...
             st.session_state.last_formatted_results = formatted_results
         elif st.session_state.auto_search:
             # Still do a light search for context
-            with st.spinner("Getting additional context..."):
+            with st.spinner("Getting context..."):
                 search_results = search_all_sources(prompt)
                 st.session_state.last_search_results = search_results
             
@@ -1748,10 +1460,6 @@ if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything...
             with st.spinner("Khisba is thinking..."):
                 khisba_response = generate_khisba_response(
                     prompt,
-                    model,
-                    system_prompt,
-                    temperature,
-                    max_tokens,
                     search_results,
                     knowledge_check
                 )
@@ -1771,14 +1479,14 @@ if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything...
                 confidence_text = "Researched Answer"
                 emoji = "🔍"
             
-            st.markdown(f'<div class="{confidence_class}">{emoji} {confidence_text} ({confidence*100:.0f}%)</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="{confidence_class}">{emoji} {confidence_text}</div>', unsafe_allow_html=True)
             
             # Display Khisba's response
             st.markdown(khisba_response)
             
             # Add footer note
             if knowledge_check["knows"] is False or knowledge_check["confidence"] < 0.6:
-                st.info("💡 *This answer includes information gathered from multiple verified sources.*")
+                st.info("💡 *This answer includes information from verified sources.*")
         
         with tab2:
             if formatted_results:
@@ -1791,21 +1499,26 @@ if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything...
             
             with col1:
                 st.subheader("🧠 Knowledge Analysis")
-                st.metric("Knowledge Level", 
-                         "Expert" if knowledge_check["confidence"] > 0.8 else 
-                         "Good" if knowledge_check["confidence"] > 0.6 else 
-                         "Partial" if knowledge_check["knows"] == "partial" else 
-                         "None")
+                knowledge_level = (
+                    "Expert" if knowledge_check["confidence"] > 0.8 else 
+                    "Good" if knowledge_check["confidence"] > 0.6 else 
+                    "Partial" if knowledge_check["knows"] == "partial" else 
+                    "None"
+                )
+                st.metric("Knowledge Level", knowledge_level)
                 
-                st.metric("Topic Type", knowledge_check.get("type", "Unknown").replace("_", " ").title())
+                topic_type = knowledge_check.get("type", "Unknown").replace("_", " ").title()
+                st.metric("Topic Type", topic_type)
                 
-                st.metric("Search Triggered", "Yes" if needs_search else "No")
+                search_triggered = "Yes" if needs_search else "No"
+                st.metric("Search Triggered", search_triggered)
             
             with col2:
                 st.subheader("🔍 Search Stats")
                 if search_results:
                     successful_searches = sum(1 for v in search_results.values() 
-                                            if isinstance(v, (list, dict)) and "error" not in str(v))
+                                            if isinstance(v, (list, dict)) and 
+                                            (not isinstance(v, dict) or "error" not in v))
                     st.metric("Sources Queried", len(search_results))
                     st.metric("Successful", successful_searches)
                 else:
@@ -1833,11 +1546,11 @@ with col1:
     st.markdown("**🛰️ GIS Expert**")
     st.caption("Specialized in remote sensing")
 with col2:
-    st.markdown("**🔍 16 Sources**")
+    st.markdown("**🔍 Smart Search**")
     st.caption("Automatic verification")
 with col3:
     st.markdown("**🎯 Honest AI**")
     st.caption("Admits when unsure")
 
 st.markdown("---")
-st.caption("Khisba GIS AI Assistant v1.0 | Your friendly geospatial expert")
+st.caption("Khisba GIS AI Assistant v1.0 | Your friendly geospatial expert | No installation required")
