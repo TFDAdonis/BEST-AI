@@ -5,18 +5,57 @@ import xml.etree.ElementTree as ET
 import concurrent.futures
 import arxiv
 import wikipedia
-import re
-import random
 from pathlib import Path
+from ctransformers import AutoModelForCausalLM
+import re
 from datetime import datetime
-import time
-import textwrap
 
-# ==================== SERVICE FUNCTIONS ====================
+# ==================== ENHANCED SERVICE FUNCTIONS ====================
 
-# ArXiv Service
+# Enhanced query classification
+def classify_query_intent(query: str) -> dict:
+    """
+    Classify the intent of the query to help organize results better.
+    Returns a dictionary with intent category and confidence.
+    """
+    query_lower = query.lower()
+    
+    # Intent patterns (can be expanded)
+    intent_patterns = {
+        "finance": ["stock", "index", "price", "ticker", "market", "invest", "cboe", "vix", "volatility", "s&p"],
+        "automotive": ["car", "vehicle", "vin", "decode", "manufacturer", "model", "year", "license"],
+        "technical": ["code", "program", "github", "stack", "api", "function", "bug", "error"],
+        "medical": ["health", "disease", "medical", "treatment", "symptom", "pubmed", "clinical"],
+        "academic": ["research", "paper", "study", "arxiv", "university", "professor", "hypothesis"],
+        "geography": ["country", "city", "location", "map", "capital", "population", "border"],
+        "weather": ["weather", "temperature", "forecast", "humidity", "rain", "sunny", "climate"],
+        "dictionary": ["definition", "meaning", "word", "phrase", "pronounce", "synonym"],
+        "general": []  # Default category
+    }
+    
+    scores = {intent: 0 for intent in intent_patterns}
+    
+    # Score each intent based on keyword matches
+    for intent, keywords in intent_patterns.items():
+        for keyword in keywords:
+            if keyword in query_lower:
+                scores[intent] += 1
+    
+    # Get primary intent
+    primary_intent = max(scores, key=scores.get)
+    confidence = scores[primary_intent] / max(len(query.split()), 1)
+    
+    return {
+        "primary_intent": primary_intent if scores[primary_intent] > 0 else "general",
+        "all_intents": {k: v for k, v in scores.items() if v > 0},
+        "confidence": confidence
+    }
+
+# Enhanced ArXiv Service
 def search_arxiv(query: str, max_results: int = 3):
-    """Search arXiv for scientific papers."""
+    """
+    Search arXiv for scientific papers with enhanced error handling.
+    """
     try:
         client = arxiv.Client()
         search = arxiv.Search(
@@ -41,11 +80,13 @@ def search_arxiv(query: str, max_results: int = 3):
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"ArXiv search failed: {str(e)}"}]
 
-# DuckDuckGo Services
+# Enhanced DuckDuckGo Services with better parsing
 def search_duckduckgo(query: str, max_results: int = 5):
-    """Search DuckDuckGo web results."""
+    """
+    Search DuckDuckGo web results with improved parsing.
+    """
     try:
         url = "https://api.duckduckgo.com/"
         params = {
@@ -66,18 +107,21 @@ def search_duckduckgo(query: str, max_results: int = 5):
                 "title": data.get("Heading", "Instant Answer"),
                 "body": data.get("AbstractText", ""),
                 "url": data.get("AbstractURL", ""),
-                "type": "instant_answer"
+                "type": "instant_answer",
+                "source": "DuckDuckGo"
             })
         
         # Get related topics
         for topic in data.get("RelatedTopics", []):
-            if isinstance(topic, dict) and "Text" in topic and "FirstURL" in topic:
-                results.append({
-                    "title": topic.get("Text", "").split(" - ")[0] if " - " in topic.get("Text", "") else topic.get("Text", ""),
-                    "body": topic.get("Text", "").split(" - ")[1] if " - " in topic.get("Text", "") else "",
-                    "url": topic.get("FirstURL", ""),
-                    "type": "related_topic"
-                })
+            if isinstance(topic, dict) and "Text" in topic:
+                if "FirstURL" in topic:
+                    results.append({
+                        "title": topic.get("Text", "").split(" - ")[0] if " - " in topic.get("Text", "") else topic.get("Text", ""),
+                        "body": topic.get("Text", "").split(" - ")[1] if " - " in topic.get("Text", "") else "",
+                        "url": topic.get("FirstURL", ""),
+                        "type": "related_topic",
+                        "source": "DuckDuckGo"
+                    })
             elif isinstance(topic, str):
                 if " - " in topic:
                     title, body = topic.split(" - ", 1)
@@ -85,7 +129,8 @@ def search_duckduckgo(query: str, max_results: int = 5):
                         "title": title,
                         "body": body,
                         "url": "",
-                        "type": "related_topic"
+                        "type": "related_topic",
+                        "source": "DuckDuckGo"
                     })
             
             if len(results) >= max_results:
@@ -93,10 +138,12 @@ def search_duckduckgo(query: str, max_results: int = 5):
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"DuckDuckGo search failed: {str(e)}"}]
 
 def get_instant_answer(query: str):
-    """Get instant answer from DuckDuckGo."""
+    """
+    Get instant answer from DuckDuckGo with enhanced parsing.
+    """
     try:
         url = "https://api.duckduckgo.com/"
         params = {
@@ -108,17 +155,27 @@ def get_instant_answer(query: str):
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         
+        # Enhanced answer extraction
+        answer = data.get("AbstractText", "")
+        if not answer and "Definition" in data:
+            answer = data.get("Definition", "")
+        if not answer and data.get("Results"):
+            answer = data["Results"][0].get("Text", "")
+        
         return {
-            "answer": data.get("AbstractText", ""),
+            "answer": answer,
             "heading": data.get("Heading", ""),
             "url": data.get("AbstractURL", ""),
-            "image": data.get("Image", "")
+            "image": data.get("Image", ""),
+            "source": "DuckDuckGo"
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Instant answer failed: {str(e)}"}
 
 def search_news(query: str, max_results: int = 3):
-    """Search news using DuckDuckGo."""
+    """
+    Search news using DuckDuckGo with enhanced parsing.
+    """
     try:
         url = "https://duckduckgo.com/html/"
         params = {
@@ -132,66 +189,117 @@ def search_news(query: str, max_results: int = 3):
         
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
+        # Enhanced regex parsing
         results = []
         
-        # Simple HTML parsing for demo
-        titles = re.findall(r'<a[^>]*class="result__url"[^>]*>([^<]+)</a>', response.text)
-        snippets = re.findall(r'<a[^>]*class="result__snippet"[^>]*>([^<]+)</a>', response.text)
+        # Try multiple patterns
+        patterns = [
+            r'<a[^>]*class="[^"]*result__url[^"]*"[^>]*>([^<]+)</a>',
+            r'<a[^>]*class="result__a"[^>]*>([^<]+)</a>',
+            r'<a[^>]*class="[^"]*result__title[^"]*"[^>]*>([^<]+)</a>'
+        ]
+        
+        for pattern in patterns:
+            titles = re.findall(pattern, response.text)
+            if titles:
+                break
+        
+        # Find snippets
+        snippet_pattern = r'<a[^>]*class="result__snippet"[^>]*>([^<]+)</a>'
+        snippets = re.findall(snippet_pattern, response.text)
         
         for i in range(min(len(titles), max_results, len(snippets))):
             results.append({
                 "title": titles[i],
-                "body": snippets[i],
-                "source": "DuckDuckGo",
-                "url": f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
+                "body": snippets[i] if i < len(snippets) else "",
+                "source": "DuckDuckGo News",
+                "url": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+                "date": datetime.now().strftime("%Y-%m-%d")
             })
         
         if not results:
+            # Fallback to regular search
             results = search_duckduckgo(f"{query} news", max_results)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"News search failed: {str(e)}"}]
 
-# Wikipedia Service
+# Enhanced Wikipedia Service
 def search_wikipedia(query: str):
-    """Search Wikipedia for information."""
+    """
+    Search Wikipedia for information with enhanced disambiguation.
+    """
     try:
         wikipedia.set_lang("en")
-        search_results = wikipedia.search(query, results=3)
+        
+        # Clean query for Wikipedia
+        clean_query = query.replace("indice", "index").replace("vin", "VIN")
+        
+        # Try multiple search strategies
+        search_results = wikipedia.search(clean_query, results=5)
         
         if not search_results:
-            return {"exists": False, "message": "No Wikipedia page found"}
+            # Try alternative search
+            search_results = wikipedia.search(query, results=3)
+            if not search_results:
+                return {"exists": False, "message": "No Wikipedia page found", "source": "Wikipedia"}
         
+        # Get the most relevant result
         try:
-            page = wikipedia.page(search_results[0])
+            page = wikipedia.page(search_results[0], auto_suggest=False)
             return {
                 "exists": True,
                 "title": page.title,
                 "summary": page.summary,
                 "url": page.url,
                 "categories": page.categories[:5],
-                "content": page.content[:1000]
+                "content": page.content[:1000],
+                "source": "Wikipedia",
+                "search_query": query
             }
         except wikipedia.exceptions.DisambiguationError as e:
+            # Return disambiguation options
             return {
                 "exists": True,
                 "title": query,
-                "summary": f"Multiple pages found. Options: {', '.join(e.options[:5])}",
+                "summary": f"Multiple pages found. Select from options.",
                 "url": f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}",
-                "disambiguation": e.options[:10]
+                "disambiguation": e.options[:10],
+                "source": "Wikipedia",
+                "type": "disambiguation"
             }
         except wikipedia.exceptions.PageError:
-            return {"exists": False, "message": "Page not found"}
+            # Try with simplified query
+            try:
+                simple_query = query.split()[0] if query.split() else query
+                page = wikipedia.page(simple_query, auto_suggest=False)
+                return {
+                    "exists": True,
+                    "title": page.title,
+                    "summary": page.summary,
+                    "url": page.url,
+                    "categories": page.categories[:5],
+                    "source": "Wikipedia"
+                }
+            except:
+                return {"exists": False, "message": "Page not found", "source": "Wikipedia"}
             
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Wikipedia search failed: {str(e)}"}
 
-# Weather Service
+# Enhanced Weather Service
 def get_weather_wttr(location: str):
-    """Get weather information using wttr.in."""
+    """
+    Get weather information using wttr.in with enhanced location handling.
+    """
     try:
-        url = f"https://wttr.in/{location}?format=j1"
+        # Clean location string
+        clean_location = re.sub(r'[^\w\s,-]', '', location).strip()
+        if not clean_location:
+            clean_location = "New York"
+            
+        url = f"https://wttr.in/{clean_location}?format=j1"
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; WeatherApp/1.0)"
         }
@@ -200,9 +308,12 @@ def get_weather_wttr(location: str):
         data = response.json()
         
         current = data.get("current_condition", [{}])[0]
+        nearest_area = data.get("nearest_area", [{}])[0]
         
         return {
-            "location": location,
+            "location": clean_location,
+            "area_name": nearest_area.get("areaName", [{}])[0].get("value", clean_location),
+            "country": nearest_area.get("country", [{}])[0].get("value", "N/A"),
             "temperature_c": current.get("temp_C", "N/A"),
             "temperature_f": current.get("temp_F", "N/A"),
             "condition": current.get("weatherDesc", [{}])[0].get("value", "N/A"),
@@ -213,15 +324,21 @@ def get_weather_wttr(location: str):
             "pressure_mb": current.get("pressure", "N/A"),
             "feels_like_c": current.get("FeelsLikeC", "N/A"),
             "feels_like_f": current.get("FeelsLikeF", "N/A"),
-            "observation_time": current.get("observation_time", "N/A")
+            "observation_time": current.get("observation_time", "N/A"),
+            "source": "wttr.in"
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Weather service failed: {str(e)}"}
 
-# Air Quality Service
+# Enhanced Air Quality Service
 def get_air_quality(location: str):
-    """Get air quality data from OpenAQ."""
+    """
+    Get air quality data from OpenAQ with enhanced location handling.
+    """
     try:
+        # Clean location for API
+        clean_location = location.split(",")[0].strip() if "," in location else location.strip()
+        
         url = f"https://api.openaq.org/v2/latest"
         params = {
             "limit": 5,
@@ -230,17 +347,10 @@ def get_air_quality(location: str):
             "sort": "desc",
             "radius": 25000,
             "order_by": "lastUpdated",
-            "dumpRaw": False
+            "city": clean_location
         }
         
-        if location:
-            params["city"] = location
-        
-        headers = {
-            "X-API-Key": ""
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, timeout=10)
         data = response.json()
         
         if data.get("results"):
@@ -250,6 +360,7 @@ def get_air_quality(location: str):
                     "location": result.get("location", "N/A"),
                     "city": result.get("city", "N/A"),
                     "country": result.get("country", "N/A"),
+                    "coordinates": result.get("coordinates", {}),
                     "measurements": []
                 }
                 
@@ -264,27 +375,48 @@ def get_air_quality(location: str):
                 results.append(location_data)
             
             return {
-                "city": location,
+                "city": clean_location,
                 "data": results,
-                "count": len(results)
+                "count": len(results),
+                "source": "OpenAQ"
             }
         else:
-            return {"message": f"No air quality data found for {location}"}
+            # Try without city parameter
+            params.pop("city", None)
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if data.get("results"):
+                return {
+                    "city": "Global",
+                    "data": data["results"][:3],
+                    "count": len(data["results"][:3]),
+                    "message": f"No specific data for {clean_location}, showing global data",
+                    "source": "OpenAQ"
+                }
+            else:
+                return {"message": f"No air quality data found for {clean_location}", "source": "OpenAQ"}
             
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Air quality service failed: {str(e)}"}
 
-# Wikidata Service
+# Enhanced Wikidata Service
 def search_wikidata(query: str, max_results: int = 3):
-    """Search Wikidata for entities."""
+    """
+    Search Wikidata for entities with enhanced query handling.
+    """
     try:
+        # Clean query for Wikidata
+        clean_query = query.replace("indice", "").strip()
+        
         url = "https://www.wikidata.org/w/api.php"
         params = {
             "action": "wbsearchentities",
-            "search": query,
+            "search": clean_query,
             "language": "en",
             "format": "json",
-            "limit": max_results
+            "limit": max_results,
+            "type": "item"  # Search for items specifically
         }
         
         response = requests.get(url, params=params, timeout=10)
@@ -292,27 +424,37 @@ def search_wikidata(query: str, max_results: int = 3):
         
         results = []
         for entity in data.get("search", []):
-            result = {
+            # Get more details for each entity
+            entity_details = {
                 "id": entity.get("id", ""),
                 "label": entity.get("label", ""),
                 "description": entity.get("description", ""),
                 "url": f"https://www.wikidata.org/wiki/{entity.get('id', '')}",
-                "concepturi": entity.get("concepturi", "")
+                "concepturi": entity.get("concepturi", ""),
+                "match": entity.get("match", {}).get("text", ""),
+                "aliases": entity.get("aliases", []),
+                "source": "Wikidata"
             }
-            results.append(result)
+            results.append(entity_details)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"Wikidata search failed: {str(e)}"}]
 
-# OpenLibrary Service
+# Enhanced OpenLibrary Service
 def search_books(query: str, max_results: int = 5):
-    """Search for books using OpenLibrary API."""
+    """
+    Search for books using OpenLibrary API with enhanced query handling.
+    """
     try:
+        # Clean query for book search
+        clean_query = query.replace("indice", "index").replace("vin", "")
+        
         url = "https://openlibrary.org/search.json"
         params = {
-            "q": query,
-            "limit": max_results
+            "q": clean_query,
+            "limit": max_results,
+            "fields": "title,author_name,first_publish_year,publisher,language,subject,key,cover_i"
         }
         
         response = requests.get(url, params=params, timeout=10)
@@ -329,28 +471,35 @@ def search_books(query: str, max_results: int = 5):
                 "subject": doc.get("subject", [])[:3],
                 "url": f"https://openlibrary.org{doc.get('key', '')}" if doc.get("key") else "",
                 "cover_id": doc.get("cover_i"),
-                "cover_url": f"https://covers.openlibrary.org/b/id/{doc.get('cover_i')}-M.jpg" if doc.get("cover_i") else None
+                "cover_url": f"https://covers.openlibrary.org/b/id/{doc.get('cover_i')}-M.jpg" if doc.get("cover_i") else None,
+                "source": "OpenLibrary"
             }
             results.append(book)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"Book search failed: {str(e)}"}]
 
-# PubMed Service
+# Enhanced PubMed Service
 def search_pubmed(query: str, max_results: int = 3):
-    """Search PubMed for medical research articles."""
+    """
+    Search PubMed for medical research articles with enhanced query handling.
+    """
     try:
+        # Clean medical query
+        clean_query = query.replace("vin", "").replace("indice", "index").strip()
+        
         base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
         
-        # Step 1: Search for IDs
+        # Search for article IDs
         search_url = f"{base_url}/esearch.fcgi"
         search_params = {
             "db": "pubmed",
-            "term": query,
+            "term": clean_query,
             "retmode": "json",
             "retmax": max_results,
-            "sort": "relevance"
+            "sort": "relevance",
+            "field": "title/abstract"  # Search in title and abstract
         }
         
         search_response = requests.get(search_url, params=search_params, timeout=10)
@@ -359,9 +508,16 @@ def search_pubmed(query: str, max_results: int = 3):
         ids = search_data.get("esearchresult", {}).get("idlist", [])
         
         if not ids:
-            return [{"message": "No articles found"}]
+            # Try broader search
+            search_params["term"] = query
+            search_response = requests.get(search_url, params=search_params, timeout=10)
+            search_data = search_response.json()
+            ids = search_data.get("esearchresult", {}).get("idlist", [])
         
-        # Step 2: Fetch article details
+        if not ids:
+            return [{"message": "No articles found for the query", "source": "PubMed"}]
+        
+        # Fetch article details
         fetch_url = f"{base_url}/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
@@ -372,20 +528,26 @@ def search_pubmed(query: str, max_results: int = 3):
         
         fetch_response = requests.get(fetch_url, params=fetch_params, timeout=10)
         
+        # Parse XML
         root = ET.fromstring(fetch_response.content)
         
         results = []
         for article in root.findall(".//PubmedArticle"):
             article_elem = article.find(".//Article")
             
-            title_elem = article_elem.find(".//ArticleTitle")
+            title_elem = article_elem.find(".//ArticleTitle") if article_elem is not None else None
             title = title_elem.text if title_elem is not None else "N/A"
             
-            abstract_elem = article_elem.find(".//Abstract/AbstractText")
-            abstract = abstract_elem.text if abstract_elem is not None else "No abstract available"
+            # Extract abstract
+            abstract_text = []
+            for abstract_elem in article_elem.findall(".//Abstract/AbstractText") if article_elem is not None else []:
+                if abstract_elem.text:
+                    abstract_text.append(abstract_elem.text)
+            abstract = " ".join(abstract_text) if abstract_text else "No abstract available"
             
+            # Extract authors
             authors = []
-            for author_elem in article_elem.findall(".//Author"):
+            for author_elem in article.findall(".//Author"):
                 last_name_elem = author_elem.find("LastName")
                 fore_name_elem = author_elem.find("ForeName")
                 
@@ -394,15 +556,21 @@ def search_pubmed(query: str, max_results: int = 3):
                 elif last_name_elem is not None:
                     authors.append(last_name_elem.text)
             
-            pub_date_elem = article_elem.find(".//PubMedPubDate[@PubStatus='pubmed']")
+            # Extract publication year
+            pub_date_elem = article.find(".//PubMedPubDate[@PubStatus='pubmed']")
             year = "N/A"
             if pub_date_elem is not None:
                 year_elem = pub_date_elem.find("Year")
                 if year_elem is not None:
                     year = year_elem.text
             
+            # Get PubMed ID
             pmid_elem = article.find(".//PMID")
             pmid = pmid_elem.text if pmid_elem is not None else ""
+            
+            # Get journal
+            journal_elem = article_elem.find(".//Journal/Title") if article_elem is not None else None
+            journal = journal_elem.text if journal_elem is not None else "N/A"
             
             result = {
                 "title": title,
@@ -410,28 +578,36 @@ def search_pubmed(query: str, max_results: int = 3):
                 "authors": authors[:5],
                 "year": year,
                 "pmid": pmid,
-                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
+                "journal": journal,
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "",
+                "source": "PubMed"
             }
             results.append(result)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"PubMed search failed: {str(e)}"}]
 
-# Nominatim Service (Geocoding)
+# Enhanced Nominatim Service (Geocoding)
 def geocode_location(location: str):
-    """Geocode a location using Nominatim (OpenStreetMap)."""
+    """
+    Geocode a location using Nominatim with enhanced handling.
+    """
     try:
+        # Clean location string
+        clean_location = re.sub(r'[^\w\s,-]', '', location).strip()
+        
         url = "https://nominatim.openstreetmap.org/search"
         params = {
-            "q": location,
+            "q": clean_location,
             "format": "json",
             "limit": 1,
-            "addressdetails": 1
+            "addressdetails": 1,
+            "namedetails": 1
         }
         
         headers = {
-            "User-Agent": "AI-Search-Assistant/1.0"
+            "User-Agent": "AI-Search-Assistant/2.0 (research@example.com)"
         }
         
         response = requests.get(url, params=params, headers=headers, timeout=10)
@@ -449,94 +625,157 @@ def geocode_location(location: str):
                 "osm_id": result.get("osm_id", "N/A"),
                 "osm_type": result.get("osm_type", "N/A"),
                 "osm_url": f"https://www.openstreetmap.org/{result.get('osm_type', '')}/{result.get('osm_id', '')}",
-                "address": result.get("address", {})
+                "address": result.get("address", {}),
+                "namedetails": result.get("namedetails", {}),
+                "source": "Nominatim (OpenStreetMap)"
             }
         else:
-            return {"message": f"Location '{location}' not found"}
+            # Try with simplified query
+            simple_query = clean_location.split(",")[0] if "," in clean_location else clean_location
+            params["q"] = simple_query
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            data = response.json()
+            
+            if data and len(data) > 0:
+                result = data[0]
+                return {
+                    "display_name": result.get("display_name", "N/A"),
+                    "latitude": result.get("lat", "N/A"),
+                    "longitude": result.get("lon", "N/A"),
+                    "type": result.get("type", "N/A"),
+                    "address": result.get("address", {}),
+                    "source": "Nominatim (OpenStreetMap)",
+                    "note": f"Found for simplified query: {simple_query}"
+                }
+            else:
+                return {"message": f"Location '{clean_location}' not found", "source": "Nominatim"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Geocoding failed: {str(e)}"}
 
-# Dictionary Service
+# Enhanced Dictionary Service
 def get_definition(word: str):
-    """Get dictionary definition using Free Dictionary API."""
+    """
+    Get dictionary definition with enhanced word handling.
+    """
     try:
-        url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
+        # Clean word for dictionary
+        clean_word = re.sub(r'[^\w\s]', '', word).strip().lower()
+        
+        # Handle compound words/phrases
+        if " " in clean_word:
+            # For phrases, get definition of first word
+            clean_word = clean_word.split()[0]
+        
+        url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_word}"
         
         response = requests.get(url, timeout=10)
         
         if response.status_code == 404:
-            return {"error": f"Word '{word}' not found in dictionary"}
+            # Try alternative dictionary
+            return {"error": f"Word '{clean_word}' not found in dictionary", "source": "DictionaryAPI"}
         
         data = response.json()
         
         if isinstance(data, list) and len(data) > 0:
             word_data = data[0]
             
+            # Extract phonetic pronunciations
             phonetics = []
             if "phonetics" in word_data:
                 for phonetic in word_data["phonetics"]:
                     if phonetic.get("text"):
-                        phonetics.append(phonetic["text"])
+                        phonetics.append({
+                            "text": phonetic["text"],
+                            "audio": phonetic.get("audio", "")
+                        })
             
+            # Extract meanings
             meanings = []
             if "meanings" in word_data:
                 for meaning in word_data["meanings"]:
                     meaning_entry = {
                         "part_of_speech": meaning.get("partOfSpeech", ""),
-                        "definitions": []
+                        "definitions": [],
+                        "synonyms": meaning.get("synonyms", [])[:5],
+                        "antonyms": meaning.get("antonyms", [])[:5]
                     }
                     
                     for definition in meaning.get("definitions", []):
                         def_entry = {
                             "definition": definition.get("definition", ""),
-                            "example": definition.get("example", "")
+                            "example": definition.get("example", ""),
+                            "synonyms": definition.get("synonyms", [])[:3],
+                            "antonyms": definition.get("antonyms", [])[:3]
                         }
                         meaning_entry["definitions"].append(def_entry)
                     
                     meanings.append(meaning_entry)
             
             return {
-                "word": word_data.get("word", word),
+                "word": word_data.get("word", clean_word),
                 "phonetics": phonetics,
                 "meanings": meanings,
                 "license": word_data.get("license", {}),
-                "source_urls": word_data.get("sourceUrls", [])
+                "source_urls": word_data.get("sourceUrls", []),
+                "source": "DictionaryAPI"
             }
         else:
-            return {"error": "Invalid response from dictionary API"}
+            return {"error": "Invalid response from dictionary API", "source": "DictionaryAPI"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Dictionary service failed: {str(e)}"}
 
-# Countries Service
+# Enhanced Countries Service
 def search_country(query: str):
-    """Search for country information using REST Countries API."""
+    """
+    Search for country information with enhanced query handling.
+    """
     try:
-        url = f"https://restcountries.com/v3.1/name/{query}"
+        # Clean query for country search
+        clean_query = re.sub(r'[^\w\s]', '', query).strip()
+        
+        # First, try exact name
+        url = f"https://restcountries.com/v3.1/name/{clean_query}"
         response = requests.get(url, timeout=10)
         
         if response.status_code == 404:
-            url = f"https://restcountries.com/v3.1/name/{query}"
+            # Try partial search
+            url = f"https://restcountries.com/v3.1/name/{clean_query}"
             params = {"fullText": False}
             response = requests.get(url, params=params, timeout=10)
         
         if response.status_code != 200:
-            return {"error": f"Country '{query}' not found"}
+            # Try alpha code search
+            url = f"https://restcountries.com/v3.1/alpha/{clean_query[:3]}"
+            response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            return {"error": f"Country '{clean_query}' not found", "source": "REST Countries"}
         
         data = response.json()
         
         if data and len(data) > 0:
             country = data[0]
             
+            # Extract languages
             languages = []
             if "languages" in country:
                 languages = list(country["languages"].values())
             
+            # Extract currencies
             currencies = []
             if "currencies" in country:
                 for curr_code, curr_info in country["currencies"].items():
-                    currencies.append(f"{curr_info.get('name', '')} ({curr_code})")
+                    currencies.append({
+                        "code": curr_code,
+                        "name": curr_info.get('name', ''),
+                        "symbol": curr_info.get('symbol', '')
+                    })
             
+            # Extract capital
             capital = country.get("capital", ["N/A"])[0] if country.get("capital") else "N/A"
+            
+            # Extract borders
+            borders = country.get("borders", [])
             
             return {
                 "name": country.get("name", {}).get("common", "N/A"),
@@ -549,44 +788,59 @@ def search_country(query: str):
                 "languages": languages,
                 "currencies": currencies,
                 "timezones": country.get("timezones", []),
+                "borders": borders,
                 "flag_emoji": country.get("flag", "🇺🇳"),
                 "flag_url": country.get("flags", {}).get("png", ""),
                 "coat_of_arms": country.get("coatOfArms", {}).get("png", ""),
-                "map_url": country.get("maps", {}).get("googleMaps", "")
+                "map_url": country.get("maps", {}).get("googleMaps", ""),
+                "source": "REST Countries"
             }
         else:
-            return {"error": "No country data found"}
+            return {"error": "No country data found", "source": "REST Countries"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Country search failed: {str(e)}"}
 
-# Quotes Service
+# Enhanced Quotes Service
 def search_quotes(query: str, max_results: int = 3):
-    """Search for quotes using Quotable API."""
+    """
+    Search for quotes with enhanced query handling.
+    """
     try:
+        # Clean query for quotes
+        clean_query = re.sub(r'[^\w\s]', '', query).strip()
+        
+        # First try search
         url = "https://api.quotable.io/search/quotes"
         params = {
-            "query": query,
-            "limit": max_results
+            "query": clean_query,
+            "limit": max_results,
+            "fields": "content,author,tags,length"
         }
         
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         
         results = []
-        for quote in data.get("results", [])[:max_results]:
-            result = {
-                "content": quote.get("content", ""),
-                "author": quote.get("author", "Unknown"),
-                "tags": quote.get("tags", []),
-                "length": quote.get("length", 0),
-                "date_added": quote.get("dateAdded", ""),
-                "date_modified": quote.get("dateModified", "")
-            }
-            results.append(result)
+        if data.get("results"):
+            for quote in data.get("results", [])[:max_results]:
+                result = {
+                    "content": quote.get("content", ""),
+                    "author": quote.get("author", "Unknown"),
+                    "tags": quote.get("tags", []),
+                    "length": quote.get("length", 0),
+                    "date_added": quote.get("dateAdded", ""),
+                    "date_modified": quote.get("dateModified", ""),
+                    "source": "Quotable API"
+                }
+                results.append(result)
         
-        if not results:
+        # If no search results or query is generic, get random quotes
+        if not results or len(clean_query.split()) < 2:
             url = "https://api.quotable.io/quotes/random"
-            params = {"limit": max_results}
+            params = {
+                "limit": max_results,
+                "tags": "inspirational|motivational|wisdom"
+            }
             
             response = requests.get(url, params=params, timeout=10)
             random_quotes = response.json()
@@ -596,34 +850,47 @@ def search_quotes(query: str, max_results: int = 3):
                     "content": quote.get("content", ""),
                     "author": quote.get("author", "Unknown"),
                     "tags": quote.get("tags", []),
-                    "length": quote.get("length", 0)
+                    "length": quote.get("length", 0),
+                    "source": "Quotable API (Random)"
                 }
                 results.append(result)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"Quotes service failed: {str(e)}"}]
 
-# GitHub Service
+# Enhanced GitHub Service
 def search_github_repos(query: str, max_results: int = 3):
-    """Search GitHub repositories."""
+    """
+    Search GitHub repositories with enhanced query handling.
+    """
     try:
+        # Clean query for GitHub
+        clean_query = query.replace("indice", "").strip()
+        
         url = "https://api.github.com/search/repositories"
         params = {
-            "q": query,
+            "q": f"{clean_query} in:name,description,readme",
             "sort": "stars",
             "order": "desc",
             "per_page": max_results
         }
         
         headers = {
-            "Accept": "application/vnd.github.v3+json"
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "AI-Search-Assistant/2.0"
         }
         
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
+        # Handle rate limiting
         if response.status_code == 403:
-            return [{"error": "GitHub API rate limit exceeded. Try again later."}]
+            remaining = response.headers.get("X-RateLimit-Remaining", "0")
+            reset_time = response.headers.get("X-RateLimit-Reset", "0")
+            return [{
+                "error": f"GitHub API rate limit exceeded. Remaining: {remaining}, Resets at: {reset_time}",
+                "source": "GitHub"
+            }]
         
         data = response.json()
         
@@ -640,25 +907,33 @@ def search_github_repos(query: str, max_results: int = 3):
                 "license": repo.get("license", {}).get("name", "No license") if repo.get("license") else "No license",
                 "created_at": repo.get("created_at", ""),
                 "updated_at": repo.get("updated_at", ""),
-                "owner": repo.get("owner", {}).get("login", "N/A") if repo.get("owner") else "N/A"
+                "owner": repo.get("owner", {}).get("login", "N/A") if repo.get("owner") else "N/A",
+                "topics": repo.get("topics", []),
+                "source": "GitHub"
             }
             results.append(result)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"GitHub search failed: {str(e)}"}]
 
-# StackExchange Service
+# Enhanced StackExchange Service
 def search_stackoverflow(query: str, max_results: int = 3):
-    """Search Stack Overflow questions."""
+    """
+    Search Stack Overflow questions with enhanced query handling.
+    """
     try:
+        # Clean query for Stack Overflow
+        clean_query = re.sub(r'[^\w\s]', '', query).strip()
+        
         url = "https://api.stackexchange.com/2.3/search"
         params = {
             "order": "desc",
             "sort": "relevance",
-            "intitle": query,
+            "intitle": clean_query,
             "site": "stackoverflow",
-            "pagesize": max_results
+            "pagesize": max_results,
+            "filter": "withbody"
         }
         
         response = requests.get(url, params=params, timeout=10)
@@ -677,581 +952,205 @@ def search_stackoverflow(query: str, max_results: int = 3):
                 "link": question.get("link", ""),
                 "url": question.get("link", ""),
                 "owner": question.get("owner", {}).get("display_name", "Anonymous") if question.get("owner") else "Anonymous",
-                "creation_date": question.get("creation_date", 0)
+                "creation_date": question.get("creation_date", 0),
+                "body_preview": question.get("body", "")[:200] + "..." if question.get("body") else "",
+                "source": "Stack Overflow"
             }
             results.append(result)
         
         return results
     except Exception as e:
-        return [{"error": str(e)}]
+        return [{"error": f"Stack Overflow search failed: {str(e)}"}]
 
-# ==================== KHISBA GIS KNOWLEDGE BASE ====================
+# ==================== INTELLIGENT RESULT ORGANIZATION ====================
 
-class KhisbaKnowledgeBase:
-    """Khisba's specialized knowledge about GIS and remote sensing"""
+def organize_results_by_intent(query: str, results: dict, intent_info: dict) -> dict:
+    """
+    Organize search results by intent and relevance.
+    """
+    organized = {
+        "query": query,
+        "intent": intent_info,
+        "primary_results": {},
+        "secondary_results": {},
+        "all_results": results
+    }
     
-    def __init__(self):
-        self.knowledge = {
-            "vegetation_indices": {
-                "ndvi": {
-                    "formula": "(NIR - Red) / (NIR + Red)",
-                    "bands": "Landsat: B5-B4, Sentinel-2: B8-B4",
-                    "range": "-1 to +1",
-                    "description": "Normalized Difference Vegetation Index - measures vegetation health. Values close to +1 indicate dense, healthy vegetation.",
-                    "application": "Agriculture monitoring, forestry, drought assessment, crop health analysis",
-                    "confidence": 0.95
-                },
-                "ndwi": {
-                    "formula": "(Green - NIR) / (Green + NIR)",
-                    "bands": "Landsat: B3-B5, Sentinel-2: B3-B8",
-                    "range": "-1 to +1",
-                    "description": "Normalized Difference Water Index - detects water bodies and monitors water content in vegetation.",
-                    "application": "Water resource management, flood monitoring, wetland mapping",
-                    "confidence": 0.90
-                },
-                "evi": {
-                    "formula": "2.5 * ((NIR - Red) / (NIR + 6 * Red - 7.5 * Blue + 1))",
-                    "bands": "Landsat: B5, B4, B2 (NIR, Red, Blue)",
-                    "description": "Enhanced Vegetation Index - improves sensitivity in high biomass regions and reduces atmospheric influences.",
-                    "application": "Dense forest monitoring, crop yield prediction, biomass estimation",
-                    "confidence": 0.85
-                },
-                "savi": {
-                    "formula": "((NIR - Red) / (NIR + Red + L)) * (1 + L)",
-                    "bands": "Landsat: B5-B4",
-                    "description": "Soil Adjusted Vegetation Index - minimizes soil brightness effects, where L is a soil adjustment factor (typically 0.5).",
-                    "application": "Arid regions, sparse vegetation areas, soil-vegetation studies",
-                    "confidence": 0.85
-                }
-            },
-            "satellites": {
-                "landsat": {
-                    "description": "NASA/USGS Earth observation program running since 1972. Provides the longest continuous space-based record of Earth's land surfaces.",
-                    "bands": "11 spectral bands (Coastal aerosol, Blue, Green, Red, NIR, SWIR1, SWIR2, Panchromatic, Cirrus, Thermal1, Thermal2)",
-                    "resolution": "15m (pan), 30m (multispectral), 100m (thermal)",
-                    "revisit": "16 days",
-                    "application": "Land cover change, agriculture, forestry, water resources",
-                    "confidence": 0.95
-                },
-                "sentinel-2": {
-                    "description": "European Earth observation mission part of Copernicus Program. Provides high-resolution multispectral imagery.",
-                    "bands": "13 spectral bands including 4 red-edge bands (10m, 20m, 60m resolution)",
-                    "resolution": "10m (visible/NIR), 20m (red-edge/SWIR), 60m (atmospheric correction)",
-                    "revisit": "5 days (with 2 satellites)",
-                    "application": "Land monitoring, emergency response, security services",
-                    "confidence": 0.95
-                },
-                "modis": {
-                    "description": "Moderate Resolution Imaging Spectroradiometer on NASA's Terra and Aqua satellites.",
-                    "resolution": "250m, 500m, 1000m",
-                    "revisit": "1-2 days",
-                    "application": "Global monitoring, climate studies, ocean color, atmospheric studies",
-                    "confidence": 0.90
-                }
-            },
-            "gis_software": {
-                "qgis": {
-                    "description": "Free and open-source Geographic Information System. Cross-platform desktop GIS application.",
-                    "features": "Vector/raster analysis, database support, 3D visualization, map composition, Python scripting",
-                    "confidence": 0.90
-                },
-                "arcgis": {
-                    "description": "Proprietary GIS platform by Esri. Industry standard for many organizations.",
-                    "features": "Enterprise GIS, spatial analysis, web mapping, 3D analytics, real-time data",
-                    "confidence": 0.85
-                },
-                "google earth engine": {
-                    "description": "Cloud-based geospatial analysis platform with petabyte-scale satellite imagery archive.",
-                    "features": "JavaScript/Python API, massive data catalog, parallel processing, machine learning integration",
-                    "confidence": 0.90
-                }
-            },
-            "concepts": {
-                "remote sensing": "The acquisition of information about an object or phenomenon without making physical contact with the object.",
-                "geospatial analysis": "The gathering, display, and manipulation of imagery, GPS, satellite photography and historical data.",
-                "spectral signature": "Characteristic reflectance or emission of a material or object as a function of wavelength.",
-                "temporal resolution": "The amount of time between each image collection period over the same area.",
-                "spatial resolution": "The smallest object that can be detected in an image, often measured in meters per pixel.",
-                "radiometric correction": "The process of removing sensor and atmospheric effects from satellite imagery.",
-                "image classification": "The process of categorizing pixels in an image into land cover classes.",
-                "supervised classification": "Classification where user identifies representative training samples for each class.",
-                "unsupervised classification": "Classification where computer automatically groups pixels with similar characteristics.",
-                "ndvi": "Normalized Difference Vegetation Index - measures vegetation health from -1 to +1.",
-                "landsat": "Longest-running Earth observation satellite program (since 1972).",
-                "sentinel": "European Earth observation satellite constellation for Copernicus Program.",
-                "gis": "Geographic Information System - system for capturing, storing, analyzing and managing geographic data.",
-                "raster data": "Grid-based data where each cell contains a value representing information.",
-                "vector data": "Geometric objects (points, lines, polygons) representing features on Earth.",
-                "projection": "Method of representing the curved surface of the Earth on a flat map.",
-                "coordinate system": "Reference system for defining positions on Earth (e.g., WGS84, UTM)."
-            }
-        }
+    primary_intent = intent_info.get("primary_intent", "general")
     
-    def check_knowledge(self, query):
-        """Check if Khisba knows about this topic"""
-        query_lower = query.lower()
-        
-        # Check vegetation indices
-        for idx_name, idx_info in self.knowledge["vegetation_indices"].items():
-            if idx_name in query_lower:
-                return {
-                    "knows": True,
-                    "topic": "vegetation_indices",
-                    "key": idx_name,
-                    "info": idx_info,
-                    "confidence": idx_info["confidence"],
-                    "type": "expert_knowledge"
-                }
-        
-        # Check satellites
-        for sat_name, sat_info in self.knowledge["satellites"].items():
-            if sat_name in query_lower:
-                return {
-                    "knows": True,
-                    "topic": "satellites",
-                    "key": sat_name,
-                    "info": sat_info,
-                    "confidence": sat_info["confidence"],
-                    "type": "expert_knowledge"
-                }
-        
-        # Check GIS software
-        for software_name, software_info in self.knowledge["gis_software"].items():
-            if software_name in query_lower:
-                return {
-                    "knows": True,
-                    "topic": "gis_software",
-                    "key": software_name,
-                    "info": software_info,
-                    "confidence": software_info["confidence"],
-                    "type": "expert_knowledge"
-                }
-        
-        # Check concepts
-        for concept_name, concept_desc in self.knowledge["concepts"].items():
-            if concept_name in query_lower:
-                return {
-                    "knows": True,
-                    "topic": "concepts",
-                    "key": concept_name,
-                    "info": {"description": concept_desc},
-                    "confidence": 0.85,
-                    "type": "concept_knowledge"
-                }
-        
-        # Check for GIS/remote sensing keywords
-        gis_keywords = [
-            'gis', 'remote sensing', 'satellite', 'ndvi', 'ndwi', 'evi', 'savi', 
-            'landsat', 'sentinel', 'modis', 'vegetation', 'index', 'indices',
-            'raster', 'vector', 'geospatial', 'spatial', 'qgis', 'arcgis',
-            'spectral', 'band', 'resolution', 'classification', 'supervised',
-            'unsupervised', 'coordinates', 'projection', 'cartography', 'mapping'
-        ]
-        
-        if any(keyword in query_lower for keyword in gis_keywords):
-            return {
-                "knows": "partial",
-                "topic": "general_gis",
-                "confidence": 0.70,
-                "type": "general_knowledge"
-            }
-        
-        return {
-            "knows": False,
-            "topic": "unknown",
-            "confidence": 0.0,
-            "type": "no_knowledge"
-        }
+    # Map intents to source categories
+    intent_source_map = {
+        "finance": ["duckduckgo", "duckduckgo_instant", "news", "wikipedia", "wikidata"],
+        "automotive": ["wikipedia", "duckduckgo", "duckduckgo_instant", "geocoding"],
+        "technical": ["github", "stackoverflow", "arxiv", "wikipedia"],
+        "medical": ["pubmed", "wikipedia", "duckduckgo"],
+        "academic": ["arxiv", "pubmed", "wikipedia", "books"],
+        "geography": ["geocoding", "country", "weather", "wikipedia"],
+        "weather": ["weather", "air_quality", "geocoding"],
+        "dictionary": ["dictionary", "wikipedia", "duckduckgo_instant"],
+        "general": ["wikipedia", "duckduckgo", "duckduckgo_instant", "news"]
+    }
     
-    def generate_khisba_response(self, knowledge_result, user_query=""):
-        """Generate Khisba's response based on his knowledge"""
-        if not knowledge_result["knows"]:
-            return None
-        
-        if knowledge_result["knows"] == "partial":
-            responses = [
-                f"Hmm, '{user_query}' sounds GIS-related! Let me check my sources to give you the most accurate information... 🌍",
-                f"I have some knowledge about GIS topics like this, but I want to verify the latest information for you... 🛰️",
-                f"That's in the geospatial domain! Let me double-check the specifics to make sure I give you precise details... 📊"
-            ]
-            return random.choice(responses)
-        
-        topic = knowledge_result["topic"]
-        info = knowledge_result["info"]
-        key = knowledge_result["key"]
-        
-        # Start with enthusiastic greeting
-        greetings = [
-            "Ah, excellent question! ",
-            "Ooh, I love talking about this! ",
-            "Great question! This is one of my favorite topics! ",
-            "Perfect! Let me share what I know about "
-        ]
-        
-        response = random.choice(greetings)
-        
-        if topic == "vegetation_indices":
-            response += f"**{key.upper()}** (Normalized Difference Vegetation Index) is one of the most widely used vegetation indices! 🌿\n\n"
-            response += f"**What it measures:** {info.get('description', '')}\n\n"
-            response += f"**Formula:** `{info.get('formula', 'N/A')}`\n"
-            response += f"**Bands used:** {info.get('bands', 'N/A')}\n"
-            response += f"**Value range:** {info.get('range', 'N/A')}\n"
-            response += f"**Common applications:** {info.get('application', 'N/A')}\n\n"
-            
-            # Add tips
-            tips = [
-                "💡 **Tip:** Values above 0.6 usually indicate dense, healthy vegetation!",
-                "💡 **Tip:** You can calculate this in QGIS using the raster calculator!",
-                "💡 **Tip:** For time-series analysis, NDVI is perfect for tracking vegetation changes!",
-                "💡 **Tip:** Combine NDVI with other indices for comprehensive analysis!"
-            ]
-            response += random.choice(tips)
-            
-        elif topic == "satellites":
-            response += f"**{key.title()}** is an amazing Earth observation system! 🛰️\n\n"
-            response += f"**Description:** {info.get('description', '')}\n\n"
-            if 'bands' in info:
-                response += f"**Spectral bands:** {info.get('bands', 'N/A')}\n"
-            response += f"**Spatial resolution:** {info.get('resolution', 'N/A')}\n"
-            response += f"**Revisit time:** {info.get('revisit', 'N/A')}\n"
-            if 'application' in info:
-                response += f"**Primary applications:** {info.get('application', 'N/A')}\n\n"
-            
-            # Add tips
-            tips = [
-                "💡 **Tip:** This satellite's data is freely available for research!",
-                "💡 **Tip:** Great for long-term environmental monitoring!",
-                "💡 **Tip:** Perfect for creating time-series analysis!",
-                "💡 **Tip:** The data can be accessed through Google Earth Engine!"
-            ]
-            response += random.choice(tips)
-            
-        elif topic == "gis_software":
-            response += f"**{key.upper()}** is a fantastic geospatial tool! 💻\n\n"
-            response += f"**Description:** {info.get('description', '')}\n\n"
-            if 'features' in info:
-                response += f"**Key features:** {info.get('features', 'N/A')}\n\n"
-            
-            # Add tips
-            tips = [
-                "💡 **Tip:** Perfect for both beginners and advanced users!",
-                "💡 **Tip:** Has a huge community and plenty of plugins!",
-                "💡 **Tip:** Great for automating workflows with Python!",
-                "💡 **Tip:** Supports both raster and vector analysis!"
-            ]
-            response += random.choice(tips)
-            
-        elif topic == "concepts":
-            response += f"In GIS/remote sensing, **{key}** refers to:\n\n"
-            response += f"{info.get('description', '')}\n\n"
-            
-            # Add context
-            contexts = [
-                "This is a fundamental concept in geospatial analysis! 📚",
-                "Understanding this is key to mastering remote sensing! 🔑",
-                "This concept comes up all the time in GIS work! 🎯",
-                "Very important for accurate spatial analysis! 💡"
-            ]
-            response += random.choice(contexts)
-        
-        # Add closing with confidence level
-        if knowledge_result["confidence"] > 0.9:
-            confidence = "🎯 **High confidence** - This is from my core GIS expertise!"
-        elif knowledge_result["confidence"] > 0.7:
-            confidence = "✅ **Good confidence** - This is well-established GIS knowledge."
+    # Get relevant sources for primary intent
+    relevant_sources = intent_source_map.get(primary_intent, intent_source_map["general"])
+    
+    # Separate primary and secondary results
+    for source, data in results.items():
+        if source in relevant_sources:
+            organized["primary_results"][source] = data
         else:
-            confidence = "🤔 **Moderate confidence** - This is general GIS knowledge I'm familiar with."
-        
-        response += f"\n\n{confidence}"
-        
-        return response
-
-# Initialize Khisba's knowledge base
-khisba_kb = KhisbaKnowledgeBase()
-
-# ==================== ENHANCED PROMPTS WITH KHISBA ====================
-
-KHISBA_SYSTEM_PROMPT = """You are Khisba GIS, an enthusiastic remote sensing and GIS expert with 10+ years of experience.
-
-PERSONALITY:
-- Name: Khisba GIS (pronounced "Kiz-bah")
-- Style: Warm, friendly, approachable, passionate about geospatial technology
-- Communication: Clear, educational, engaging, uses appropriate GIS terminology
-- Personality traits: Enthusiastic, curious, honest, detail-oriented, loves sharing knowledge
-- Speech style: Casual but professional, uses emojis appropriately (🌿🛰️🗺️📊🌍💻)
-
-CORE EXPERTISE:
-1. Vegetation indices (NDVI, NDWI, EVI, SAVI, etc.) - formulas, applications, interpretation
-2. Satellite systems (Landsat, Sentinel, MODIS, etc.) - specifications, data access, applications
-3. GIS software (QGIS, ArcGIS, Google Earth Engine) - capabilities, workflows, tips
-4. Remote sensing concepts - spectral signatures, image classification, accuracy assessment
-5. Spatial analysis - geoprocessing, statistics, modeling
-
-RESPONSE GUIDELINES:
-
-WHEN YOU KNOW THE ANSWER (GIS/remote sensing topics):
-1. Start with enthusiasm: "Ah, excellent question!" or "Ooh, I love talking about this!"
-2. Share your knowledge clearly and concisely
-3. Include specific details: formulas, band combinations, satellite specifications
-4. Add practical tips or applications
-5. Use appropriate technical terms but explain when needed
-6. End with confidence level indication
-
-WHEN YOU'RE UNSURE OR DON'T KNOW:
-1. Be honest and transparent immediately
-2. Say: "Hmm, I want to make sure I give you accurate information about that..."
-3. NEVER make up or hallucinate GIS formulas, band combinations, or technical details
-4. Admit: "That's outside my immediate expertise, but let me check the latest sources..."
-5. The system will automatically search multiple reliable sources for you
-6. Synthesize the search results into a clear, accurate response
-
-TOPIC HANDLING:
-- Primary focus: GIS, remote sensing, satellite imagery, spatial analysis
-- Secondary: Geography, environmental science, cartography, mapping
-- Unrelated topics: "As a GIS specialist, I focus on geospatial topics. Let me help you find that information through our search system..."
-- Always maintain your Khisba GIS identity
-
-EMOJI USAGE:
-🌿 = Vegetation/NDVI topics
-🛰️ = Satellite/remote sensing topics
-🗺️ = Mapping/GIS topics
-📊 = Data/analysis topics
-🌍 = Environmental/global topics
-💻 = Software/technical topics
-🔍 = Searching/research topics
-
-EXAMPLE RESPONSES:
-- Confident GIS answer: "Ah, NDVI! One of my favorites! The formula is (NIR - Red)/(NIR + Red) using Landsat bands B5 and B4... 🌿"
-- Unsure GIS topic: "Hmm, that's an interesting question about SAR interferometry. I want to verify the latest techniques. Let me check current research... 🔍"
-- Non-GIS topic: "As a GIS specialist, I focus on geospatial analysis. Let me search for accurate information about that for you... 🌍"
-
-Remember: Your goal is to be the most helpful, accurate, and enthusiastic GIS expert possible!"""
-
-PRESET_PROMPTS = {
-    "Khisba GIS": KHISBA_SYSTEM_PROMPT,
-    "Search Analyst": """You are an intelligent search analyst. Your role is to:
-- Analyze search results from multiple sources and provide clear, synthesized insights
-- Identify the most relevant and accurate information from the data provided
-- Present findings in a well-organized, easy-to-understand format
-- Highlight key facts, trends, and connections between different sources
-- Be objective and cite which sources your information comes from""",
-    "Default Assistant": "You are a helpful, friendly AI assistant. Provide clear and concise answers based on the search results provided.",
-    "Professional Expert": "You are a professional expert. Provide detailed, accurate, and well-structured responses. Use formal language and cite reasoning when appropriate.",
-    "Creative Writer": "You are a creative writer with a vivid imagination. Use descriptive language, metaphors, and engaging storytelling in your responses.",
-    "Code Helper": "You are a programming expert. Provide clean, well-commented code examples. Explain technical concepts clearly and suggest best practices.",
-    "Friendly Tutor": "You are a patient and encouraging tutor. Explain concepts step by step, use simple examples, and ask questions to ensure understanding.",
-    "Concise Responder": "You are brief and to the point. Give short, direct answers without unnecessary elaboration.",
-    "Custom": ""
-}
-
-# ==================== SIMPLIFIED MODEL SETUP ====================
-
-# Simplified model handling without ctransformers dependency
-def get_simulated_response(user_input, search_summary=None):
-    """Generate a simulated response when model is not available."""
-    if search_summary:
-        return f"Based on my search results: {search_summary[:300]}...\n\nAs Khisba GIS, I've verified this information from reliable sources. Would you like more details on any specific aspect?"
+            organized["secondary_results"][source] = data
     
-    knowledge_check = khisba_kb.check_knowledge(user_input)
-    if knowledge_check["knows"]:
-        return khisba_kb.generate_khisba_response(knowledge_check, user_input) or "I need to check the latest sources for accurate information on this GIS topic."
-    
-    return "As a GIS specialist, I focus on geospatial topics. I can search for information about that if you'd like!"
+    return organized
 
-# ==================== SEARCH FUNCTIONS ====================
-
-def search_all_sources(query: str) -> dict:
-    """Search multiple sources with error handling."""
-    results = {}
+def create_intelligent_summary(query: str, organized_results: dict) -> str:
+    """
+    Create an intelligent summary based on organized results.
+    """
+    primary_intent = organized_results["intent"].get("primary_intent", "general")
+    query_lower = query.lower()
     
-    # Define search functions with timeouts
-    search_functions = [
-        ("wikipedia", lambda: search_wikipedia(query)),
-        ("duckduckgo", lambda: search_duckduckgo(query, 3)),
-        ("instant_answer", lambda: get_instant_answer(query)),
-        ("weather", lambda: get_weather_wttr(query) if len(query.split()) <= 3 else {"error": "Location too complex"})
-    ]
-    
-    # Execute searches with timeout
-    for name, func in search_functions:
-        try:
-            results[name] = func()
-        except Exception as e:
-            results[name] = {"error": str(e)}
-    
-    return results
-
-def format_results(query: str, results: dict) -> str:
-    """Format all search results into a readable response."""
-    output = [f"## 🔍 Search Results for: *{query}*\n"]
-    
-    # Instant Answer
-    if "instant_answer" in results:
-        instant = results["instant_answer"]
-        if isinstance(instant, dict) and instant.get("answer"):
-            output.append(f"### 💡 Quick Answer\n{instant['answer']}\n")
-    
-    # Wikipedia
-    if "wikipedia" in results:
-        wiki = results["wikipedia"]
-        if isinstance(wiki, dict) and wiki.get("exists"):
-            output.append(f"### 📚 Wikipedia: {wiki.get('title', 'N/A')}")
-            summary = wiki.get('summary', '')
-            if summary:
-                output.append(f"{summary[:300]}...")
-            if wiki.get('url'):
-                output.append(f"[Read more]({wiki['url']})")
-            output.append("")
-    
-    # DuckDuckGo - FIXED CONDITION
-    if "duckduckgo" in results:
-        ddg = results["duckduckgo"]
-        # Check if ddg is a list and has items
-        if isinstance(ddg, list) and len(ddg) > 0:
-            # Check if first item exists and is not an error
-            first_item = ddg[0]
-            if isinstance(first_item, dict) and "error" not in str(first_item):
-                output.append("### 🌐 Web Results")
-                for i, item in enumerate(ddg[:3], 1):
-                    if isinstance(item, dict):
-                        output.append(f"{i}. **{item.get('title', 'N/A')}**")
-                        if item.get('body'):
-                            body = item.get('body', '')
-                            output.append(f"   {body[:150]}..." if len(body) > 150 else f"   {body}")
-                        if item.get('url'):
-                            output.append(f"   [Source]({item.get('url')})")
-                        output.append("")
-    
-    # Weather
-    if "weather" in results:
-        weather = results["weather"]
-        if isinstance(weather, dict) and "error" not in weather and weather.get("temperature_c"):
-            output.append("### 🌤️ Weather")
-            output.append(f"- **Location:** {weather.get('location', 'N/A')}")
-            output.append(f"- **Temperature:** {weather.get('temperature_c', 'N/A')}°C ({weather.get('temperature_f', 'N/A')}°F)")
-            output.append(f"- **Condition:** {weather.get('condition', 'N/A')}")
-            output.append(f"- **Humidity:** {weather.get('humidity', 'N/A')}%")
-            output.append("")
-    
-    # If no results found
-    if len(output) == 1:  # Only has the header
-        output.append("No specific search results found. Khisba will use his GIS knowledge or provide a general answer.")
-    
-    return "\n".join(output)
-
-def summarize_results_for_ai(results: dict) -> str:
-    """Create a condensed summary of search results for AI context."""
     summary_parts = []
     
-    if "wikipedia" in results:
-        wiki = results["wikipedia"]
-        if isinstance(wiki, dict) and wiki.get("exists"):
-            summary_parts.append(f"Wikipedia: {wiki.get('title', '')} - {wiki.get('summary', '')[:200]}")
+    # Add intent-based introduction
+    intent_intros = {
+        "finance": f"## 📈 Financial Analysis: {query}\nBased on your query about '{query}', here's what I found related to finance and markets:\n",
+        "automotive": f"## 🚗 Automotive Information: {query}\nSearching for '{query}' in automotive context revealed:\n",
+        "technical": f"## 💻 Technical Information: {query}\nFor the technical query '{query}', here are the relevant findings:\n",
+        "medical": f"## 🏥 Medical Research: {query}\nRegarding the medical query '{query}', here's what research shows:\n",
+        "academic": f"## 📚 Academic Research: {query}\nAcademic search for '{query}' yielded these results:\n",
+        "geography": f"## 🌍 Geographical Information: {query}\nGeographical data for '{query}':\n",
+        "weather": f"## 🌤️ Weather Information: {query}\nWeather data related to '{query}':\n",
+        "dictionary": f"## 📖 Word Analysis: {query}\nDefinition and usage of '{query}':\n",
+        "general": f"## 🔍 Search Results: {query}\nComprehensive search for '{query}' across all sources:\n"
+    }
     
-    if "instant_answer" in results:
-        instant = results["instant_answer"]
+    summary_parts.append(intent_intros.get(primary_intent, intent_intros["general"]))
+    
+    # Add primary results
+    primary_results = organized_results["primary_results"]
+    
+    # Check for instant answers first
+    if "duckduckgo_instant" in primary_results:
+        instant = primary_results["duckduckgo_instant"]
         if isinstance(instant, dict) and instant.get("answer"):
-            summary_parts.append(f"Quick Answer: {instant['answer'][:150]}")
+            summary_parts.append(f"**💡 Quick Answer:** {instant['answer']}\n")
     
-    if "duckduckgo" in results:
-        ddg = results["duckduckgo"]
-        if isinstance(ddg, list) and len(ddg) > 0:
-            for i, item in enumerate(ddg[:2]):
-                if isinstance(item, dict) and item.get("body"):
-                    summary_parts.append(f"Web Result {i+1}: {item.get('title', '')} - {item.get('body', '')[:100]}")
+    # Add Wikipedia summary if available
+    if "wikipedia" in primary_results:
+        wiki = primary_results["wikipedia"]
+        if isinstance(wiki, dict) and wiki.get("exists"):
+            summary_parts.append(f"**📚 Wikipedia Summary:** {wiki.get('summary', '')[:300]}...\n")
     
-    if "weather" in results:
-        weather = results["weather"]
-        if isinstance(weather, dict) and weather.get("temperature_c"):
-            summary_parts.append(f"Weather: {weather.get('location', 'N/A')} - {weather.get('temperature_c')}°C, {weather.get('condition', '')}")
+    # Add other primary sources
+    source_titles = {
+        "duckduckgo": "🌐 Web Results",
+        "news": "📰 Latest News",
+        "arxiv": "🔬 Scientific Papers",
+        "pubmed": "🏥 Medical Research",
+        "github": "💻 GitHub Repositories",
+        "stackoverflow": "🔧 Stack Overflow",
+        "books": "📖 Related Books",
+        "weather": "🌤️ Weather Info",
+        "country": "🌍 Country Info",
+        "dictionary": "📖 Dictionary Definition"
+    }
     
-    return "\n".join(summary_parts) if summary_parts else "Limited search results available."
+    for source, data in primary_results.items():
+        if source in source_titles and source not in ["duckduckgo_instant", "wikipedia"]:
+            if isinstance(data, list) and data and "error" not in str(data[0]):
+                summary_parts.append(f"**{source_titles[source]}:**")
+                for item in data[:2]:
+                    if isinstance(item, dict):
+                        if source == "duckduckgo":
+                            summary_parts.append(f"- {item.get('title', 'N/A')}: {item.get('body', '')[:100]}...")
+                        elif source == "news":
+                            summary_parts.append(f"- {item.get('title', 'N/A')} ({item.get('source', '')})")
+                        elif source == "arxiv":
+                            summary_parts.append(f"- {item.get('title', 'N/A')} ({item.get('published', 'N/A')})")
+                summary_parts.append("")
+    
+    # Mention secondary sources if any
+    secondary_count = len(organized_results["secondary_results"])
+    if secondary_count > 0:
+        summary_parts.append(f"\n*Additionally searched {secondary_count} other sources (view in detailed results).*\n")
+    
+    return "\n".join(summary_parts)
 
-# ==================== KHISBA RESPONSE GENERATOR ====================
+# ==================== ENHANCED SEARCH ALL FUNCTION ====================
 
-def generate_khisba_response(user_input, search_results=None, knowledge_check=None):
-    """Generate Khisba's response with intelligent steering."""
+def search_all_sources_enhanced(query: str) -> dict:
+    """Search ALL sources simultaneously with intelligent handling."""
+    # First, classify the query intent
+    intent_info = classify_query_intent(query)
     
-    if knowledge_check is None:
-        knowledge_check = khisba_kb.check_knowledge(user_input)
+    results = {}
     
-    # Case 1: Khisba knows with high confidence
-    if knowledge_check["knows"] is True and knowledge_check["confidence"] > 0.8:
-        khisba_response = khisba_kb.generate_khisba_response(knowledge_check, user_input)
-        
-        # Add search context if available
-        if search_results:
-            summary = summarize_results_for_ai(search_results)
-            if summary and "Limited search" not in summary:
-                khisba_response += "\n\n🔍 **Additional context from sources:**\n"
-                khisba_response += f"My knowledge aligns with current information. Recent sources confirm this is accurate."
-        
-        return khisba_response
+    def safe_search(name, func, *args, **kwargs):
+        try:
+            return name, func(*args, **kwargs)
+        except Exception as e:
+            return name, {"error": str(e), "source": name}
     
-    # Case 2: Partial knowledge or lower confidence
-    elif knowledge_check["knows"] == "partial" or (knowledge_check["knows"] is True and knowledge_check["confidence"] <= 0.8):
-        # Start with Khisba's partial knowledge
-        partial_response = khisba_kb.generate_khisba_response(knowledge_check, user_input)
+    # Search all sources in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        first_word = query.split()[0] if query.strip() else query
         
-        # If we have search results, enhance with them
-        if search_results:
-            summary = summarize_results_for_ai(search_results)
-            
-            if summary and "Limited search" not in summary:
-                enhanced_response = f"{partial_response}\n\n🔍 **From my search:**\n{summary}\n\nAs Khisba GIS, I can confirm this information is current and accurate."
-                return enhanced_response
+        # Prepare all search tasks
+        search_tasks = [
+            ("arxiv", search_arxiv, query, 3),
+            ("duckduckgo", search_duckduckgo, query, 5),
+            ("duckduckgo_instant", get_instant_answer, query),
+            ("news", search_news, query, 3),
+            ("wikipedia", search_wikipedia, query),
+            ("weather", get_weather_wttr, query),
+            ("air_quality", get_air_quality, query),
+            ("wikidata", search_wikidata, query, 3),
+            ("books", search_books, query, 5),
+            ("pubmed", search_pubmed, query, 3),
+            ("geocoding", geocode_location, query),
+            ("dictionary", get_definition, first_word),
+            ("country", search_country, query),
+            ("quotes", search_quotes, query, 3),
+            ("github", search_github_repos, query, 3),
+            ("stackoverflow", search_stackoverflow, query, 3),
+        ]
         
-        return partial_response or "Let me check the latest sources for you..."
+        # Submit all tasks
+        future_to_name = {}
+        for name, func, *args in search_tasks:
+            future = executor.submit(safe_search, name, func, *args)
+            future_to_name[future] = name
+        
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_name):
+            try:
+                name, data = future.result()
+                results[name] = data
+            except Exception as e:
+                name = future_to_name[future]
+                results[name] = {"error": str(e), "source": name}
     
-    # Case 3: No knowledge - rely on search results
-    else:
-        if search_results:
-            summary = summarize_results_for_ai(search_results)
-            
-            if summary and "Limited search" not in summary:
-                return f"🌍 **As a GIS specialist,** this topic is outside my immediate expertise, but I've researched it for you:\n\n{summary}\n\nI hope this information is helpful! For GIS-specific questions, I'm your expert!"
-            else:
-                return "🌍 **As a GIS specialist,** I focus on geospatial topics. This appears to be outside my expertise. Could you ask me about GIS, remote sensing, or satellite imagery instead?"
-        else:
-            return "🌍 **As a GIS specialist,** I focus on geospatial topics. Would you like me to search for information about that, or ask me about GIS/remote sensing instead?"
+    # Organize results by intent
+    organized_results = organize_results_by_intent(query, results, intent_info)
+    
+    return organized_results
 
-# ==================== STREAMLIT APP ====================
+# ==================== STREAMLIT APP ENHANCED ====================
 
 st.set_page_config(
-    page_title="Khisba GIS - AI Search Assistant",
-    page_icon="🛰️",
+    page_title="AI Search Assistant - Enhanced",
+    page_icon="🔍🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+st.title("🔍🤖 Enhanced AI-Powered Multi-Source Search")
+st.markdown("*Intelligent search across 16 sources with query understanding*")
+
+# Custom CSS for better UI
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #2E8B57;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .khisba-badge {
-        background-color: #2E8B57;
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        display: inline-block;
-        margin: 0.5rem 0;
-        font-weight: bold;
-    }
-    .confidence-high { color: #2E8B57; font-weight: bold; }
-    .confidence-medium { color: #FFA500; font-weight: bold; }
-    .confidence-low { color: #FF6347; font-weight: bold; }
-    .source-badge {
-        background-color: #f0f2f6;
-        padding: 0.25rem 0.5rem;
-        border-radius: 5px;
-        font-size: 0.8rem;
-        margin-right: 0.5rem;
-    }
     .stTabs [data-baseweb="tab-list"] {
         gap: 2px;
     }
@@ -1264,6 +1163,24 @@ st.markdown("""
         padding-top: 10px;
         padding-bottom: 10px;
     }
+    .stTabs [aria-selected="true"] {
+        background-color: #4CAF50;
+        color: white;
+    }
+    .source-card {
+        padding: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        border-left: 4px solid #4CAF50;
+    }
+    .primary-source {
+        background-color: #e8f5e9;
+        border-left-color: #4CAF50;
+    }
+    .secondary-source {
+        background-color: #f5f5f5;
+        border-left-color: #9e9e9e;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1271,286 +1188,275 @@ st.markdown("""
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = KHISBA_SYSTEM_PROMPT
+if "last_search" not in st.session_state:
+    st.session_state.last_search = None
 
-if "selected_preset" not in st.session_state:
-    st.session_state.selected_preset = "Khisba GIS"
-
-if "last_search_results" not in st.session_state:
-    st.session_state.last_search_results = None
-
-if "last_formatted_results" not in st.session_state:
-    st.session_state.last_formatted_results = None
-
-if "auto_search" not in st.session_state:
-    st.session_state.auto_search = True
-
-# Header
-st.markdown('<h1 class="main-header">🛰️ Khisba GIS AI Assistant</h1>', unsafe_allow_html=True)
-st.markdown('<div class="khisba-badge">Your Friendly GIS & Remote Sensing Expert</div>', unsafe_allow_html=True)
-st.markdown("**Knows GIS deeply | Admits when unsure | Searches multiple sources automatically**")
+if "last_organized_results" not in st.session_state:
+    st.session_state.last_organized_results = None
 
 # Sidebar
 with st.sidebar:
-    st.header("🧙‍♂️ Khisba's Capabilities")
+    st.header("🎯 Intelligent Search")
     
-    with st.expander("📚 Core Knowledge", expanded=True):
+    with st.expander("🔍 Query Understanding", expanded=True):
         st.markdown("""
-        **🎯 Expert in:**
-        - Vegetation indices (NDVI, NDWI, EVI, SAVI)
-        - Satellite systems (Landsat, Sentinel, MODIS)
-        - GIS software (QGIS, ArcGIS, Google Earth Engine)
-        - Remote sensing concepts & analysis
-        
-        **🔍 When unsure:**
-        1. Honestly admits uncertainty
-        2. Searches multiple reliable sources
-        3. Synthesizes verified information
-        4. Maintains GIS expert persona
+        The system automatically:
+        1. **Classifies** your query intent
+        2. **Prioritizes** relevant sources
+        3. **Organizes** results intelligently
+        4. **Summarizes** key findings
         """)
     
     st.divider()
     
-    st.header("⚙️ Configuration")
-    
-    selected_preset = st.selectbox(
-        "AI Persona:",
-        options=list(PRESET_PROMPTS.keys()),
-        index=list(PRESET_PROMPTS.keys()).index(st.session_state.selected_preset),
-        key="preset_selector"
-    )
-    
-    if selected_preset != st.session_state.selected_preset:
-        st.session_state.selected_preset = selected_preset
-        if selected_preset != "Custom":
-            st.session_state.system_prompt = PRESET_PROMPTS[selected_preset]
-    
-    if selected_preset == "Custom":
-        system_prompt = st.text_area(
-            "Custom System Prompt:",
-            value=st.session_state.system_prompt,
-            height=150,
-            key="system_prompt_input"
-        )
-    else:
-        system_prompt = st.session_state.system_prompt
-        with st.expander("View System Prompt"):
-            st.text(system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt)
-    
-    st.divider()
-    
-    st.subheader("⚡ Settings")
-    
-    st.session_state.auto_search = st.checkbox(
-        "Auto-search when unsure", 
-        value=st.session_state.auto_search,
-        help="Automatically search sources when Khisba is uncertain"
-    )
-    
-    show_raw_data = st.checkbox("Show raw search data", value=False)
+    st.header("📊 All 16 Sources")
+    with st.expander("View Source Categories", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+            **🌐 Web & Knowledge:**
+            - DuckDuckGo Web
+            - Instant Answers
+            - News Search
+            - Wikipedia
+            - Wikidata
+            
+            **🔬 Science & Research:**
+            - ArXiv Papers
+            - PubMed Medical
+            
+            **📚 Reference:**
+            - OpenLibrary Books
+            - Dictionary API
+            - REST Countries
+            """)
+        with col2:
+            st.markdown("""
+            **💬 Quotes:**
+            - Quotable API
+            
+            **💻 Developer:**
+            - GitHub Repos
+            - Stack Overflow
+            
+            **📍 Location & Env:**
+            - Geocoding
+            - Weather
+            - Air Quality
+            """)
     
     st.divider()
     
-    st.subheader("🔍 Available Sources")
-    with st.expander("View Sources"):
-        st.markdown("""
-        **🌐 Web & Knowledge:**
-        - DuckDuckGo Search
-        - Wikipedia
-        - Instant Answers
-        
-        **🌤️ Location Services:**
-        - Weather data
-        
-        **More sources available in full version**
-        """)
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear Chat", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.last_search_results = None
-            st.session_state.last_formatted_results = None
-            st.rerun()
-    
-    with col2:
-        if st.button("🔄 Reset", use_container_width=True):
-            st.session_state.system_prompt = KHISBA_SYSTEM_PROMPT
-            st.session_state.selected_preset = "Khisba GIS"
-            st.session_state.auto_search = True
-            st.rerun()
-    
-    st.divider()
-    st.caption("Khisba GIS Assistant v1.0")
-    st.caption("No model download required")
+    if st.button("🗑️ Clear Chat & Search", type="secondary", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.last_search = None
+        st.session_state.last_organized_results = None
+        st.rerun()
 
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
-if prompt := st.chat_input("Ask Khisba about GIS, remote sensing, or anything..."):
-    # Add user message to history
+# Main chat interface
+if prompt := st.chat_input("Ask anything... (16 sources + intelligent analysis)"):
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Prepare assistant response
     with st.chat_message("assistant"):
-        # Check Khisba's knowledge
-        knowledge_check = khisba_kb.check_knowledge(prompt)
-        
-        # Determine if we need to search
-        needs_search = False
-        search_note = ""
-        
-        if knowledge_check["knows"] is False:
-            needs_search = True
-            search_note = "🔍 Khisba doesn't know this - searching sources..."
-        elif knowledge_check["knows"] == "partial":
-            needs_search = True
-            search_note = "🤔 Khisba wants to verify - searching for accuracy..."
-        elif knowledge_check["confidence"] < 0.7:
-            needs_search = True
-            search_note = "📚 Khisba is checking latest sources..."
-        elif knowledge_check["confidence"] >= 0.9:
-            search_note = "🎯 Khisba knows this well!"
-        else:
-            search_note = "✅ Khisba has good knowledge about this!"
-        
-        # Show search status
-        status_placeholder = st.empty()
-        if search_note:
-            status_placeholder.info(search_note)
-        
-        # Perform search if needed and auto-search is enabled
-        search_results = None
-        formatted_results = None
-        
-        if needs_search and st.session_state.auto_search:
-            with st.spinner("Searching sources..."):
-                search_results = search_all_sources(prompt)
-                st.session_state.last_search_results = search_results
+        # Step 1: Analyze query intent
+        with st.status("🤔 Analyzing query intent...", expanded=False) as status:
+            intent_info = classify_query_intent(prompt)
+            primary_intent = intent_info.get("primary_intent", "general")
+            confidence = intent_info.get("confidence", 0)
             
-            formatted_results = format_results(prompt, search_results)
-            st.session_state.last_formatted_results = formatted_results
-        elif st.session_state.auto_search:
-            # Still do a light search for context
-            with st.spinner("Getting context..."):
-                search_results = search_all_sources(prompt)
-                st.session_state.last_search_results = search_results
+            intent_display = {
+                "finance": "💰 Financial",
+                "automotive": "🚗 Automotive", 
+                "technical": "💻 Technical",
+                "medical": "🏥 Medical",
+                "academic": "📚 Academic",
+                "geography": "🌍 Geographical",
+                "weather": "🌤️ Weather",
+                "dictionary": "📖 Dictionary",
+                "general": "🔍 General"
+            }
             
-            formatted_results = format_results(prompt, search_results)
-            st.session_state.last_formatted_results = formatted_results
+            st.write(f"**Detected Intent:** {intent_display.get(primary_intent, 'General Search')}")
+            st.write(f"**Confidence:** {confidence:.0%}")
+            
+            if intent_info.get("all_intents"):
+                st.write("**Other possible intents:**")
+                for intent, score in intent_info["all_intents"].items():
+                    if intent != primary_intent and score > 0:
+                        st.write(f"- {intent_display.get(intent, intent)}: {score}")
+            
+            status.update(label=f"✅ Query understood as: {intent_display.get(primary_intent, 'General Search')}", state="complete")
         
-        # Clear status
-        status_placeholder.empty()
+        # Step 2: Search all sources
+        with st.status("🔎 Searching all 16 sources simultaneously...", expanded=False) as status:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            organized_results = search_all_sources_enhanced(prompt)
+            st.session_state.last_search = prompt
+            st.session_state.last_organized_results = organized_results
+            
+            # Simulate progress
+            for i in range(1, 17):
+                progress_bar.progress(i/16)
+                status_text.text(f"Searching source {i} of 16...")
+            
+            progress_bar.empty()
+            status_text.empty()
+            
+            # Show source statistics
+            primary_count = len(organized_results.get("primary_results", {}))
+            secondary_count = len(organized_results.get("secondary_results", {}))
+            
+            status.update(label=f"✅ Found results from {primary_count + secondary_count} sources ({primary_count} primary, {secondary_count} secondary)", state="complete")
         
-        # Create tabs for different views
-        tab1, tab2, tab3 = st.tabs(["🧙‍♂️ Khisba's Answer", "📊 Search Results", "⚙️ Analysis"])
+        # Step 3: Display intelligent summary
+        st.markdown("### 🧠 Intelligent Summary")
+        intelligent_summary = create_intelligent_summary(prompt, organized_results)
+        st.markdown(intelligent_summary)
+        
+        # Step 4: Show detailed results in tabs
+        st.markdown("---")
+        tab1, tab2, tab3, tab4 = st.tabs(["🎯 Primary Results", "📋 All Results", "📊 Source Analysis", "📈 Raw Data"])
         
         with tab1:
-            # Generate Khisba's response
-            with st.spinner("Khisba is thinking..."):
-                khisba_response = generate_khisba_response(
-                    prompt,
-                    search_results,
-                    knowledge_check
-                )
+            st.markdown("### 🎯 Most Relevant Results (Based on Query Intent)")
             
-            # Display confidence indicator
-            confidence = knowledge_check["confidence"]
-            if confidence >= 0.8:
-                confidence_class = "confidence-high"
-                confidence_text = "High Confidence"
-                emoji = "🎯"
-            elif confidence >= 0.5:
-                confidence_class = "confidence-medium"
-                confidence_text = "Moderate Confidence"
-                emoji = "✅"
+            primary_results = organized_results.get("primary_results", {})
+            if primary_results:
+                for source, data in primary_results.items():
+                    with st.expander(f"📌 {source.replace('_', ' ').title()}", expanded=True):
+                        if isinstance(data, list):
+                            for item in data[:3]:
+                                if isinstance(item, dict):
+                                    if "error" not in item:
+                                        st.markdown(f"**{item.get('title', 'No title')}**")
+                                        if item.get('body'):
+                                            st.markdown(f"{item.get('body', '')[:200]}...")
+                                        if item.get('url'):
+                                            st.markdown(f"[🔗 Source]({item.get('url')})")
+                                        st.divider()
+                        elif isinstance(data, dict):
+                            if "error" not in data:
+                                for key, value in list(data.items())[:10]:
+                                    st.markdown(f"**{key.replace('_', ' ').title()}:** {str(value)[:100]}")
             else:
-                confidence_class = "confidence-low"
-                confidence_text = "Researched Answer"
-                emoji = "🔍"
-            
-            st.markdown(f'<div class="{confidence_class}">{emoji} {confidence_text}</div>', unsafe_allow_html=True)
-            
-            # Display Khisba's response
-            st.markdown(khisba_response)
-            
-            # Add footer note
-            if knowledge_check["knows"] is False or knowledge_check["confidence"] < 0.6:
-                st.info("💡 *This answer includes information from verified sources.*")
+                st.info("No primary results to display.")
         
         with tab2:
-            if formatted_results:
-                st.markdown(formatted_results)
-            else:
-                st.info("No search results available. Enable auto-search to see results here.")
+            st.markdown("### 📋 All Search Results")
+            
+            all_results = organized_results.get("all_results", {})
+            for source, data in all_results.items():
+                source_type = "primary" if source in organized_results.get("primary_results", {}) else "secondary"
+                
+                with st.expander(f"{'🎯' if source_type == 'primary' else '📄'} {source.replace('_', ' ').title()}"):
+                    if isinstance(data, list):
+                        st.markdown(f"**Items found:** {len(data)}")
+                        for i, item in enumerate(data[:5]):
+                            with st.container():
+                                if isinstance(item, dict):
+                                    if "error" in item:
+                                        st.error(f"Error: {item['error']}")
+                                    else:
+                                        st.markdown(f"**{i+1}. {item.get('title', 'No title')}**")
+                                        if item.get('body'):
+                                            st.markdown(f"{item.get('body', '')[:150]}...")
+                                        if item.get('url'):
+                                            st.markdown(f"[View source]({item.get('url')})")
+                    elif isinstance(data, dict):
+                        if "error" in data:
+                            st.error(f"Error: {data['error']}")
+                        else:
+                            for key, value in list(data.items())[:15]:
+                                st.markdown(f"**{key.replace('_', ' ').title()}:** {str(value)[:200]}")
         
         with tab3:
-            col1, col2 = st.columns(2)
+            st.markdown("### 📊 Source Analysis")
+            
+            col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.subheader("🧠 Knowledge Analysis")
-                knowledge_level = (
-                    "Expert" if knowledge_check["confidence"] > 0.8 else 
-                    "Good" if knowledge_check["confidence"] > 0.6 else 
-                    "Partial" if knowledge_check["knows"] == "partial" else 
-                    "None"
-                )
-                st.metric("Knowledge Level", knowledge_level)
-                
-                topic_type = knowledge_check.get("type", "Unknown").replace("_", " ").title()
-                st.metric("Topic Type", topic_type)
-                
-                search_triggered = "Yes" if needs_search else "No"
-                st.metric("Search Triggered", search_triggered)
-            
+                st.metric("Primary Sources", len(organized_results.get("primary_results", {})))
             with col2:
-                st.subheader("🔍 Search Stats")
-                if search_results:
-                    successful_searches = sum(1 for v in search_results.values() 
-                                            if isinstance(v, (list, dict)) and 
-                                            (not isinstance(v, dict) or "error" not in v))
-                    st.metric("Sources Queried", len(search_results))
-                    st.metric("Successful", successful_searches)
-                else:
-                    st.info("No search performed")
+                st.metric("Secondary Sources", len(organized_results.get("secondary_results", {})))
+            with col3:
+                total_sources = len(organized_results.get("all_results", {}))
+                st.metric("Total Sources", total_sources)
             
-            if show_raw_data and search_results:
-                st.subheader("📈 Raw Data Preview")
-                for source, data in list(search_results.items())[:3]:
-                    with st.expander(f"{source.replace('_', ' ').title()}"):
-                        if isinstance(data, list):
-                            st.json(data[:2] if len(data) > 2 else data)
-                        else:
-                            st.json(data)
-    
-    # Add to conversation history
-    st.session_state.messages.append({
-        "role": "assistant", 
-        "content": khisba_response
-    })
+            # Source effectiveness chart
+            st.markdown("#### Source Results Quality")
+            
+            source_quality = {}
+            for source, data in organized_results.get("all_results", {}).items():
+                if isinstance(data, list):
+                    if data and "error" not in str(data[0]):
+                        source_quality[source] = {
+                            "status": "✅ Good",
+                            "items": len(data),
+                            "type": "List"
+                        }
+                    else:
+                        source_quality[source] = {
+                            "status": "⚠️ Issues",
+                            "items": 0,
+                            "type": "List"
+                        }
+                elif isinstance(data, dict):
+                    if "error" in data:
+                        source_quality[source] = {
+                            "status": "❌ Error",
+                            "items": 0,
+                            "type": "Dict"
+                        }
+                    else:
+                        source_quality[source] = {
+                            "status": "✅ Good",
+                            "items": 1,
+                            "type": "Dict"
+                        }
+            
+            # Display as table
+            import pandas as pd
+            quality_df = pd.DataFrame.from_dict(source_quality, orient='index')
+            quality_df.index.name = "Source"
+            quality_df = quality_df.reset_index()
+            
+            st.dataframe(
+                quality_df,
+                column_config={
+                    "Source": st.column_config.TextColumn("Source"),
+                    "status": st.column_config.TextColumn("Status"),
+                    "items": st.column_config.NumberColumn("Items"),
+                    "type": st.column_config.TextColumn("Data Type")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        
+        with tab4:
+            st.markdown("### 📈 Raw Data View")
+            st.json(organized_results, expanded=False)
+        
+        # Add to chat history
+        response_content = f"""**Intelligent Search Results for:** {prompt}
 
-# Footer
-st.divider()
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.markdown("**🛰️ GIS Expert**")
-    st.caption("Specialized in remote sensing")
-with col2:
-    st.markdown("**🔍 Smart Search**")
-    st.caption("Automatic verification")
-with col3:
-    st.markdown("**🎯 Honest AI**")
-    st.caption("Admits when unsure")
+**Primary Intent:** {intent_display.get(primary_intent, 'General Search')}
 
-st.markdown("---")
-st.caption("Khisba GIS AI Assistant v1.0 | Your friendly geospatial expert | No installation required")
+{intelligent_summary}
+
+*View detailed results in the tabs above.*"""
+        
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": response_content
+        })
